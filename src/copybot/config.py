@@ -204,10 +204,26 @@ class TimingConfig(_Strict):
 
 
 class SanityConfig(_Strict):
-    # Si la posición del líder cambia más de este factor entre ciclos, no operar
+    # Si una posición YA ABIERTA del líder crece más de este factor respecto al
+    # último dato aceptado, no operar (las aperturas desde 0 no se comprueban)
     max_position_jump_factor: Dec = Field(default=Decimal("20"), gt=1)
-    # Si el capital del líder cambia más de este % entre ciclos, no operar
+    # Si el capital del líder cambia más de este % respecto al último dato
+    # aceptado, no operar (puede ser un depósito o retiro: se alerta)
     max_equity_jump_pct: Dec = Field(default=Decimal("50"), gt=0)
+    # Ciclos seguidos con algún control fallido antes de detener el bot
+    halt_after_consecutive_failures: int = Field(default=3, ge=1)
+    # Margen para relojes desincronizados: datos "del futuro" más allá de esto
+    max_clock_skew_seconds: Dec = Field(default=Decimal("5"), ge=0, le=60)
+
+    @field_validator("halt_after_consecutive_failures")
+    @classmethod
+    def _failures_cap(cls, v: int) -> int:
+        if v > limits.HARD_MAX_SANITY_FAILURES:
+            raise ValueError(
+                f"halt_after_consecutive_failures supera el tope absoluto "
+                f"{limits.HARD_MAX_SANITY_FAILURES}"
+            )
+        return v
 
 
 class PaperConfig(_Strict):

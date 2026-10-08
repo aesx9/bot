@@ -24,6 +24,9 @@ HARD_MAX_ORDERS_PER_MINUTE: Final = 10
 HARD_MAX_NOTIONAL_PER_HOUR_USD: Final = Decimal("2000")
 HARD_MAX_CONSECUTIVE_ERRORS: Final = 5
 
+# Sanity del líder: ciclos seguidos con un control fallido antes de detenerse
+HARD_MAX_SANITY_FAILURES: Final = 5
+
 # Drawdown máximo desde el pico de capital (%)
 HARD_MAX_DRAWDOWN_PCT: Final = Decimal("15")
 

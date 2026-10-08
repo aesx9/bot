@@ -49,8 +49,10 @@ ws_backoff_initial_seconds = 1
 ws_backoff_max_seconds = 60
 
 [sanity]
-max_position_jump_factor = 20
-max_equity_jump_pct = 50
+max_position_jump_factor = 20        # solo posiciones ya abiertas, nunca aperturas
+max_equity_jump_pct = 50             # depósitos/retiros también lo disparan
+halt_after_consecutive_failures = 3  # tope absoluto: 5
+max_clock_skew_seconds = 5
 
 [paper]
 initial_equity_usd = 540

@@ -183,6 +183,9 @@ Dependencias
    - Si salta cualquier control (incluido el del capital del líder, que
      puede variar por depósitos o retiros), se salta el ciclo y se alerta.
    - Si persiste N ciclos seguidos, el bot se detiene sin operar y alerta.
+   - N propuesto = 3 (`sanity.halt_after_consecutive_failures`, tope
+     absoluto 5). La referencia es el último dato aceptado, así que un salto
+     que persiste (p. ej. un depósito) acaba en parada y exige `--reset-halt`.
 4. Los valores del circuit breaker también son topes absolutos en código.
 5. Capital propio:
    - Live: el capital es el valor del portfolio que da Kraken (ya incluye
