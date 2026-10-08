@@ -384,7 +384,7 @@ supervisada con dinero real.
 
 | ID | Gravedad | Hallazgo | PoC | Estado |
 |---|---|---|---|---|
-| N1 | Media | El tope de nocional por hora detiene el bot al copiar un cierre | P4 | pendiente |
+| N1 | Media | El tope de nocional por hora detiene el bot al copiar un cierre | P4 | resuelto (`c8b33be`) |
 | N2 | Media | Con el bot detenido el libro fiscal no recoge nada (cierres de emergencia, stops) | P3 | pendiente |
 | N3 | Media | Cualquier rechazo del stop nuevo retira el antiguo (regresión de M2) | P2 | pendiente |
 | N4 | Media | El funding que no es USD solo queda en una alerta; el export no lo ve (M4) | P1 | pendiente |
@@ -395,18 +395,19 @@ supervisada con dinero real.
 | N7 | Baja | `liquidation_fee` no se deduce como comisión | (lectura) | pendiente |
 | N8 | Baja | La guarda de exposición no cuenta los activos con precio incoherente | (lectura) | pendiente |
 | N9 | Baja | El README dice que `positions.csv` se escribe "al cambiar" | (lectura) | pendiente |
-| N10 | Baja | Los cierres de emergencia cuentan en el tope de nocional | (lectura) | pendiente |
+| N10 | Baja | Los cierres de emergencia cuentan en el tope de nocional | (lectura) | resuelto (`c8b33be`) |
 
 ## Hallazgos
 
 ### N1 — El tope de nocional detiene el bot al copiar un cierre
-**Gravedad:** media · **Estado:** pendiente
+**Gravedad:** media · **Estado:** resuelto en `c8b33be`
 
 `executor.py`: `check_notional` se aplica también a las órdenes reduceOnly. Con 1.500 USD
 abiertos en la última hora, el cierre del líder supera 2.000 USD/h, salta el circuit breaker y
 el bot se detiene SIN cerrar: posición abierta con el líder plano y solo el stop de catástrofe.
 Corrección: las reduceOnly no cuentan ni se frenan en el tope de nocional.
 
+- **Regresión:** tests/unit/test_executor.py::test_reduce_only_orders_never_trip_nor_count_in_the_notional_limit
 ### N2 — Libro fiscal parado mientras el bot está detenido
 **Gravedad:** media · **Estado:** pendiente
 
@@ -481,11 +482,12 @@ antes de pasarlo al ejecutor, y la guarda de exposición total no las cuenta.
 La foto se escribe con el registro de capital (cada 15 min) y, sin cambios, como mucho cada hora.
 
 ### N10 — Cierres de emergencia y tope de nocional
-**Gravedad:** baja · **Estado:** pendiente
+**Gravedad:** baja · **Estado:** resuelto en `c8b33be`
 
 Las órdenes de emergencia se registraban con su nocional: tras `--reset-halt` el breaker podía
 saltar en la primera orden normal.
 
+- **Regresión:** tests/unit/test_executor.py::test_emergency_closes_do_not_count_in_the_notional_limit
 ## Checklist de la prueba supervisada live (capital mínimo)
 
 - [ ] Log de cuenta en una cuenta con colateral EUR: qué traen `asset` y `collateral`, moneda del
