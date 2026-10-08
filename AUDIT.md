@@ -57,7 +57,7 @@
 | M14 | Media | Lagunas de tests (mutaciones supervivientes) | mutación | resuelto (`0c8d487`) |
 | B1 | Baja | `config.toml` no ignorado; pre-commit voluntario; sin CI | (lectura) | resuelto (`dbc9c96`) |
 | B2 | Baja | `Authorization: Bearer x` deja el token | (lectura) | resuelto (`8094e83`) |
-| B3 | Baja | Año fiscal y día BCE en UTC en vez de Madrid | (lectura) | pendiente |
+| B3 | Baja | Año fiscal y día BCE en UTC en vez de Madrid | (lectura) | resuelto (`2f3d6c2`) |
 | B4 | Baja | Export no atómico; funding asignable a dos posiciones | (lectura) | pendiente |
 | B5 | Baja | `PaperAccount.orders` crece sin límite | (lectura) | pendiente (documentado) |
 | B6 | Baja | Telegram: dedupe también de críticas; `InvalidURL` sin capturar | (lectura) | pendiente |
@@ -278,10 +278,11 @@ no usan ese esquema).
 - **Regresión:** tests/unit/test_credentials_logging.py::test_authorization_schemes_hide_the_whole_token
 
 ### B3 — Año fiscal y día BCE en UTC
-**Gravedad:** baja · **Estado:** pendiente
+**Gravedad:** baja · **Estado:** resuelto en `2f3d6c2`
 
 Una posición cerrada el 31/12 a las 23:30 UTC (ya 1 de enero en Madrid) cuenta
 para el año equivocado y toma el tipo del día equivocado.
+- **Regresión:** tests/unit/test_fiscal.py::test_madrid_time_matches_the_tz_database_for_every_hour_of_several_years y ::test_position_closed_at_year_end_utc_belongs_to_the_next_year_in_spain
 
 ### B4 — Export fiscal no atómico
 **Gravedad:** baja · **Estado:** pendiente
