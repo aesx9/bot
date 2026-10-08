@@ -55,8 +55,8 @@
 | A5 | Alta | Cierre de emergencia frágil | I, K | resuelto (`e9a7925`) |
 | M1 | Media | Tamaños y precios en notación científica en `sendorder` | formato | resuelto (`b5fc7d0`) |
 | M2 | Media | Stops de catástrofe: tarde, reemplazo no atómico, sobreviven al cierre | G, G2, L | resuelto (`29da910`) |
-| M3 | Media | Libro fiscal sin deduplicación ni conciliación | D | pendiente (fuera del lote acordado) |
-| M4 | Media | Moneda y signo de funding y comisiones sin verificar | (lectura) | pendiente (fuera del lote acordado) |
+| M3 | Media | Libro fiscal sin deduplicación ni conciliación | D | resuelto (`0329124`) |
+| M4 | Media | Moneda y signo de funding y comisiones sin verificar | (lectura) | pendiente |
 | M5 | Media | Puerta `--check` mal invalidada y sin revalidar permisos | M | resuelto (`8c87bfd`) |
 | M6 | Media | "SSH solo con clave" puede no aplicarse | (OpenSSH) | resuelto (`70deb3f`) |
 | M7 | Media | `copybot-cli --status` falla con el servicio activo | (tests) | resuelto (`454058d`) |
@@ -174,7 +174,7 @@ colocar antes de cancelar y cancelar al cerrar.
 - **Regresión:** tests/integration/test_live_exchange.py::test_failed_replacement_keeps_the_old_stop, ::test_new_stop_is_placed_before_the_old_one_is_cancelled, ::test_replacement_falls_back_when_the_exchange_allows_one_stop_per_symbol, ::test_error_after_trading_does_not_skip_the_stop_sync, ::test_kill_switch_cancels_the_catastrophe_stops
 
 ### M3 — Libro fiscal sin deduplicación ni conciliación
-**Gravedad:** media · **Estado:** pendiente (fuera del lote de correcciones acordado; sigue abierto)
+**Gravedad:** media · **Estado:** resuelto en `0329124`
 
 Se ignoran `fill_id` y `booking_uid` (PoC D: una fila duplicada impide cerrar la
 posición); `drain_ledger()` vacía la memoria antes de escribir; `/fills` solo se
@@ -182,9 +182,10 @@ consulta cada 300 s y devuelve ≤100; el cursor `ts+1` con `count=50` puede sal
 eventos con el mismo milisegundo. Corrección: dedupe al escribir y al exportar,
 escritura antes de avanzar cursores, sondeo en cada ciclo con paginación y
 conciliación del neto de fills con las posiciones.
+- **Regresión:** tests/integration/test_live_ledger.py (12: paginación de /fills y del account-log, mismo milisegundo, escritura antes del cursor, idempotencia de los CSV) y tests/unit/test_fiscal.py::test_duplicated_fill_rows_are_counted_once, ::test_duplicated_fee_and_funding_rows_are_counted_once, ::test_reconciliation_*
 
 ### M4 — Moneda y signo sin verificar
-**Gravedad:** media · **Estado:** pendiente (fuera del lote de correcciones acordado; sigue abierto)
+**Gravedad:** media · **Estado:** pendiente
 
 El funding se calcula como `new_balance − old_balance` y se etiqueta USD sin
 comprobar `asset`; el signo de `fee` no se verifica; `report.py` ignora
