@@ -348,3 +348,40 @@ pública real:
   referencia diario del BCE (EUR/USD) en la fecha de cada liquidación,
   indicando la fuente en el fichero. Funding pagado y cobrado en columnas
   separadas. Las operaciones paper se excluyen siempre.
+
+## Fase 6 (verificación, 2026-10-08)
+- **Hyperliquid `portfolio`** (documentado y probado con la API real):
+  `perpMonth` y `perpAllTime` traen `accountValueHistory` y `pnlHistory` como
+  `[ms, "valor"]` a intervalos irregulares (unas 16 h en el mes). El ranking
+  agrega por día UTC y calcula la rentabilidad sobre el PnL acumulado, de
+  modo que los depósitos no cuentan como rentabilidad.
+- **`userFillsByTime`:** como mucho 2.000 fills por respuesta y peso
+  adicional de 1 por cada 20 elementos (documentado). Una respuesta llena en
+  30 días ya equivale a más de 66 fills al día: es un scalper.
+- **Criterios de `rank_leaders`** (todos por parámetro):
+  - modo de cuenta estándar;
+  - 30 días o más de historial y al menos 20 rentabilidades diarias;
+  - 40 fills al día como máximo y al menos 5 fills en 30 días (las wallets
+    sin actividad no tienen nada que copiar);
+  - como mucho un 10 % del volumen en activos sin mercado PF_ en Kraken;
+  - 8 posiciones simultáneas como máximo.
+
+  Se ordena por Sharpe anualizado (raíz de 365) de los últimos 30 días.
+- **Leaderboard** (`stats-data.hyperliquid.xyz`): no es oficial y está
+  bloqueado desde el entorno de desarrollo. Formato sin verificar; se usa solo
+  con `--leaderboard` y se marca como no oficial en la salida.
+- **BCE** (`data-api.ecb.europa.eu`, serie EXR.D.USD.EUR.SP00.A): bloqueado
+  desde el entorno de desarrollo. El formato SDMX-CSV (`TIME_PERIOD`,
+  `OBS_VALUE`) y el de `eurofxref-hist.csv` (`Date`, `USD`) se han
+  implementado según la documentación pública del BCE y hay que comprobarlos
+  en el VPS. Alternativa sin red: `--ecb-csv` con el fichero descargado.
+  - Los días sin tipo publicado se usa el último anterior (hasta 7 días
+    atrás) y el fichero indica qué fecha se ha usado.
+- **Export fiscal:** se basa en fills reales (`kraken_fills.csv`), comisiones
+  del log de cuenta (`fees.csv`) y funding en modo live. Posiciones con coste
+  medio; un fill que cruza por cero se parte en dos posiciones.
+  - El resultado y las comisiones se convierten al tipo del día de cierre;
+    cada funding, al tipo del día de su pago.
+  - Céntimos redondeados "half-up".
+  - Una posición abierta no se declara hasta cerrarla (se avisa); su funding
+    sí aparece en `fiscal_funding_<año>.csv`.

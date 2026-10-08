@@ -146,7 +146,7 @@ class HyperliquidInfo:
         self._clock = clock
         self._abstraction_cache: dict[str, tuple[float, str]] = {}
 
-    async def _post(self, body: dict[str, str]) -> Any:
+    async def _post(self, body: dict[str, Any]) -> Any:
         kind = body["type"]
         for attempt in range(self._max_retries + 1):
             await self._budget.acquire(REQUEST_WEIGHTS.get(kind, DEFAULT_WEIGHT))
@@ -196,6 +196,26 @@ class HyperliquidInfo:
                 raise LeaderDataError(f"allMids: precio no válido para {coin}")
             mids[coin] = value
         return mids
+
+    async def portfolio(self, user: str) -> dict[str, Any]:
+        """{"perpMonth": {"accountValueHistory": [[ms, "v"], ...], "pnlHistory": ...}, ...}"""
+        raw = await self._post({"type": "portfolio", "user": user})
+        if not isinstance(raw, list):
+            raise LeaderDataError("portfolio: se esperaba una lista")
+        out: dict[str, Any] = {}
+        for item in raw:
+            if isinstance(item, list) and len(item) == 2 and isinstance(item[1], dict):
+                out[str(item[0])] = item[1]
+        return out
+
+    async def user_fills_by_time(self, user: str, start_ms: int) -> list[dict[str, Any]]:
+        """Como mucho 2000 fills por respuesta (documentado)."""
+        raw = await self._post({"type": "userFillsByTime", "user": user, "startTime": start_ms})
+        if not isinstance(raw, list):
+            raise LeaderDataError("userFillsByTime: se esperaba una lista")
+        # Peso adicional documentado: 1 por cada 20 elementos devueltos
+        await self._budget.acquire(len(raw) // 20)
+        return [f for f in raw if isinstance(f, dict)]
 
     async def user_abstraction(self, user: str) -> str:
         now = self._clock()
