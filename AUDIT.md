@@ -41,7 +41,7 @@
 | A3 | Alta | Estado compartido entre paper y live | E | resuelto (`34176e2`) |
 | A4 | Alta | Los fills del primer ciclo live no entran en el libro fiscal | A | resuelto (`d59f8ef`) |
 | A5 | Alta | Cierre de emergencia frágil | I, K | resuelto (`e9a7925`) |
-| M1 | Media | Tamaños y precios en notación científica en `sendorder` | formato | pendiente |
+| M1 | Media | Tamaños y precios en notación científica en `sendorder` | formato | resuelto (`b5fc7d0`) |
 | M2 | Media | Stops de catástrofe: tarde, reemplazo no atómico, sobreviven al cierre | G, G2, L | pendiente |
 | M3 | Media | Libro fiscal sin deduplicación ni conciliación | D | pendiente |
 | M4 | Media | Moneda y signo de funding y comisiones sin verificar | (lectura) | pendiente |
@@ -145,11 +145,12 @@ la pérdida; las altas debilitan justo las redes de seguridad.
 ## Medias
 
 ### M1 — Notación científica en `sendorder`
-**Gravedad:** media · **Estado:** pendiente
+**Gravedad:** media · **Estado:** resuelto en `b5fc7d0`
 
 `Decimal(1).scaleb(3)` es `1E+3`: con `PF_PEPEUSD` (precisión −3) el bot enviaría
 `size=5E%2B3`; igual `limitPrice` por debajo de 1e-6. Los property tests usan
 `Decimal(10)**-p` y no lo ven. Corrección: serializar con formato positional.
+- **Regresión:** tests/integration/test_live_exchange.py::test_negative_precision_market_sends_positional_decimals y ::test_stop_prices_and_sizes_are_positional; tests/unit/test_records.py::test_decimals_are_written_without_scientific_notation
 
 ### M2 — Stops de catástrofe
 **Gravedad:** media · **Estado:** pendiente
