@@ -1,0 +1,223 @@
+"""Ejecución de acciones del planificador.
+
+Garantías:
+- Toda orden es límite IOC: compra como mucho a ref x (1 + tope) y vende como
+  poco a ref x (1 - tope), redondeado al tick en la dirección conservadora.
+- reduceOnly en toda reducción (viene del planificador y se respeta tal cual).
+- Idempotencia: cada orden lleva un cliOrdId único que se guarda en el estado
+  ANTES de enviarla. Si el envío falla o expira, se pregunta al exchange por
+  ese cliOrdId antes de hacer nada más; si no se puede saber, la orden queda
+  pendiente y el ciclo se aborta: nunca se reenvía a ciegas. El siguiente
+  ciclo reconcilia las pendientes antes de planificar.
+- Un cambio de dirección solo abre la nueva posición si el cierre se completó.
+- Circuit breaker y topes absolutos comprobados antes de cada envío.
+- Las ejecuciones parciales no se reintentan aquí: el ciclo siguiente parte de
+  la posición real y planifica el resto.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import uuid
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
+from typing import Any
+
+from copybot import limits
+from copybot.config import ExecutionConfig
+from copybot.exchange.base import (
+    Exchange,
+    ExchangeError,
+    OrderRequest,
+    OrderResult,
+    OrderStatus,
+)
+from copybot.models import Action, ActionKind, MarketSpec, Side
+from copybot.records import CsvRecorder, TradeRecord
+from copybot.risk import CircuitBreaker
+from copybot.state import BotState, StateStore
+
+log = logging.getLogger(__name__)
+ZERO = Decimal(0)
+
+
+class CircuitBreakerTripped(Exception):
+    pass
+
+
+class OrderUncertain(Exception):
+    """No se sabe si una orden llegó al exchange: no operar hasta reconciliar."""
+
+
+@dataclass(frozen=True)
+class ExecutionContext:
+    mode: str
+    leader_prices: Mapping[str, Decimal] = field(default_factory=dict)  # por símbolo Kraken
+    leader_time: datetime | None = None  # momento del cambio del líder (retraso)
+
+
+def limit_price(side: Side, ref: Decimal, cap_pct: Decimal, tick: Decimal) -> Decimal:
+    if side is Side.BUY:
+        raw, rounding = ref * (1 + cap_pct / 100), ROUND_FLOOR
+    else:
+        raw, rounding = ref * (1 - cap_pct / 100), ROUND_CEILING
+    return (raw / tick).to_integral_value(rounding=rounding) * tick
+
+
+class Executor:
+    def __init__(
+        self,
+        *,
+        exchange: Exchange,
+        store: StateStore,
+        state: BotState,
+        breaker: CircuitBreaker,
+        recorder: CsvRecorder,
+        cfg: ExecutionConfig,
+        send_timeout_seconds: float = 10,
+        pending_grace_seconds: float = 60,
+        now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        self._ex = exchange
+        self._store = store
+        self._state = state
+        self._breaker = breaker
+        self._rec = recorder
+        self._cap = min(cfg.slippage_cap_pct, limits.HARD_MAX_SLIPPAGE_PCT)
+        self._timeout = send_timeout_seconds
+        self._grace = pending_grace_seconds
+        self._now = now
+
+    # --- reconciliación ---
+
+    async def reconcile_pending(self) -> None:
+        """Resuelve las órdenes pendientes de ciclos anteriores. Lanza si alguna sigue dudosa."""
+        for cli, info in list(self._state.pending_orders.items()):
+            result = await self._ex.find_order(cli)
+            if result is None:
+                age = (self._now() - datetime.fromisoformat(info["created_at"])).total_seconds()
+                if age < self._grace:
+                    raise OrderUncertain(f"orden {cli} sin confirmar ({age:.0f} s)")
+                log.warning("orden %s no consta en el exchange tras %.0f s: no se envió",
+                            cli, age)
+            else:
+                self._record(info, result)
+            del self._state.pending_orders[cli]
+            self._store.save(self._state)
+
+    # --- ejecución ---
+
+    async def execute(
+        self,
+        actions: list[Action],
+        *,
+        markets: Mapping[str, MarketSpec],
+        positions: Mapping[str, Decimal],
+        ctx: ExecutionContext,
+        emergency: bool = False,
+    ) -> list[OrderResult]:
+        """emergency=True (cierre total por drawdown): solo admite órdenes reduceOnly
+        y no las frena el circuit breaker, que existe para impedir AUMENTAR riesgo."""
+        pos = dict(positions)
+        results: list[OrderResult] = []
+        incomplete_flip: set[str] = set()
+
+        for a in actions:
+            if a.kind is ActionKind.FLIP_OPEN and a.symbol in incomplete_flip:
+                log.warning("%s: el cierre del cambio de dirección no se completó; "
+                            "la apertura queda para el ciclo siguiente", a.symbol)
+                continue
+
+            cur = pos.get(a.symbol, ZERO)
+            delta = a.size if a.side is Side.BUY else -a.size
+            if not a.reduce_only:
+                projected = abs(cur + delta) * a.ref_price
+                if projected > limits.HARD_MAX_NOTIONAL_PER_ASSET_USD:
+                    raise limits.HardLimitViolation(
+                        f"{a.symbol}: la orden dejaría {projected} USD > tope absoluto"
+                    )
+            if emergency:
+                if not a.reduce_only:
+                    raise limits.HardLimitViolation("cierre de emergencia con orden no reduceOnly")
+            else:
+                reason = self._breaker.check(a.notional_usd)
+                if reason:
+                    raise CircuitBreakerTripped(reason)
+
+            spec = markets[a.symbol]
+            req = OrderRequest(
+                cli_ord_id=uuid.uuid4().hex,
+                symbol=a.symbol, side=a.side, size=a.size,
+                limit_price=limit_price(a.side, a.ref_price, self._cap, spec.tick_size),
+                reduce_only=a.reduce_only,
+            )
+            info: dict[str, Any] = {
+                "symbol": a.symbol, "side": a.side.value, "size": str(a.size),
+                "limit_price": str(req.limit_price), "reduce_only": a.reduce_only,
+                "ref_price": str(a.ref_price), "action": a.kind.value,
+                "leader_price": _opt(ctx.leader_prices.get(a.symbol)),
+                "leader_time": None if ctx.leader_time is None else ctx.leader_time.isoformat(),
+                "mode": ctx.mode, "created_at": self._now().isoformat(),
+            }
+            # Primero se persiste la intención; después se envía.
+            self._state.pending_orders[req.cli_ord_id] = info
+            self._breaker.record(a.notional_usd)
+            self._store.save(self._state)
+
+            result = await self._send(req)
+            del self._state.pending_orders[req.cli_ord_id]
+            self._record(info, result)
+            self._store.save(self._state)
+            results.append(result)
+
+            if result.filled_size > 0:
+                signed = result.filled_size if a.side is Side.BUY else -result.filled_size
+                pos[a.symbol] = cur + signed
+            if result.status is OrderStatus.REJECTED:
+                log.warning("%s: orden rechazada (%s)", a.symbol, result.reason)
+            if a.kind is ActionKind.FLIP_CLOSE and result.status is not OrderStatus.FILLED:
+                incomplete_flip.add(a.symbol)
+        return results
+
+    async def _send(self, req: OrderRequest) -> OrderResult:
+        try:
+            return await asyncio.wait_for(self._ex.send_order(req), timeout=self._timeout)
+        except (ExchangeError, TimeoutError, OSError) as exc:
+            log.warning("envío de %s incierto (%s): se consulta al exchange",
+                        req.cli_ord_id, type(exc).__name__)
+        try:
+            found = await self._ex.find_order(req.cli_ord_id)
+        except (ExchangeError, TimeoutError, OSError) as exc:
+            raise OrderUncertain(
+                f"orden {req.cli_ord_id}: ni envío ni consulta ({type(exc).__name__})"
+            ) from exc
+        if found is None:
+            raise OrderUncertain(f"orden {req.cli_ord_id} sin confirmar tras el error")
+        return found
+
+    def _record(self, info: Mapping[str, Any], result: OrderResult) -> None:
+        if result.filled_size <= 0 or result.avg_price is None:
+            return
+        now = self._now()
+        leader_time = info.get("leader_time")
+        delay = None
+        if isinstance(leader_time, str):
+            delay = Decimal(str(round((now - datetime.fromisoformat(leader_time))
+                                      .total_seconds(), 3)))
+        leader_price = info.get("leader_price")
+        self._rec.trade(TradeRecord(
+            timestamp=now, mode=str(info["mode"]), symbol=str(info["symbol"]),
+            action=str(info["action"]), side=str(info["side"]), size=result.filled_size,
+            reduce_only=bool(info["reduce_only"]),
+            leader_price=None if leader_price is None else Decimal(str(leader_price)),
+            ref_price=Decimal(str(info["ref_price"])), fill_price=result.avg_price,
+            fee_usd=result.fee_usd, delay_seconds=delay, cli_ord_id=result.cli_ord_id,
+            status=result.status.value,
+        ))
+
+
+def _opt(v: Decimal | None) -> str | None:
+    return None if v is None else str(v)
