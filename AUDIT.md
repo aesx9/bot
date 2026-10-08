@@ -387,7 +387,7 @@ supervisada con dinero real.
 | N1 | Media | El tope de nocional por hora detiene el bot al copiar un cierre | P4 | resuelto (`c8b33be`) |
 | N2 | Media | Con el bot detenido el libro fiscal no recoge nada (cierres de emergencia, stops) | P3 | resuelto (`d40b652`) |
 | N3 | Media | Cualquier rechazo del stop nuevo retira el antiguo (regresión de M2) | P2 | resuelto (`ca9285c`) |
-| N4 | Media | El funding que no es USD solo queda en una alerta; el export no lo ve (M4) | P1 | pendiente |
+| N4 | Media | El funding que no es USD solo queda en una alerta; el export no lo ve (M4) | P1 | resuelto (`b430609`) |
 | N5 | Baja/Media | Tras saltar un stop de catástrofe el bot reabre en el ciclo siguiente | P5 | resuelto (`65eb429`) |
 | T1 | Baja | Hueco de test de A1: las dos capas de captura se tapan entre sí | mutación | pendiente |
 | T2 | Baja | Hueco de test de B3: ningún test distingue el día del tipo del BCE | mutación | pendiente |
@@ -430,7 +430,7 @@ concreto; cualquier otro rechazo mantiene el antiguo y alerta crítica.
 
 - **Regresión:** tests/integration/test_live_exchange.py::test_other_rejections_of_the_new_stop_keep_the_old_one (3 estados)
 ### N4 — Funding en otra moneda: solo una alerta
-**Gravedad:** media · **Estado:** pendiente
+**Gravedad:** media · **Estado:** resuelto en `b430609`
 
 `live.py`, `_funding_event`: un funding que no es USD no se escribe en ningún CSV, su
 `booking_uid` se marca como visto (no se relee ni se vuelve a avisar) y solo queda la alerta
@@ -439,6 +439,7 @@ detecta. Además `_currency` prefiere `collateral` a `asset` en silencio. Correc
 con moneda; el export convierte EUR y falla si es otra; aviso si `collateral` y `asset`
 discrepan.
 
+- **Regresión:** tests/integration/test_live_ledger.py::test_funding_in_another_currency_is_kept_with_its_currency, ::test_collateral_and_asset_disagreeing_is_unknown_and_alerts; tests/unit/test_fiscal.py::test_eur_funding_is_converted_with_the_ecb_rate_of_its_day, ::test_funding_in_an_unconvertible_currency_blocks_the_export
 ### N5 — Reapertura tras un stop de catástrofe
 **Gravedad:** baja/media · **Estado:** resuelto en `65eb429`
 
