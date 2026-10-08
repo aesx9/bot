@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from decimal import Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal, localcontext
 from enum import StrEnum
 
 
@@ -65,3 +65,40 @@ class SizingResult:
     targets: dict[str, Decimal]  # símbolo Kraken -> tamaño objetivo con signo
     scale_applied: Decimal = Decimal(1)  # <1 si se redujo por apalancamiento total
     capped_assets: frozenset[str] = field(default_factory=frozenset)
+
+
+@dataclass(frozen=True)
+class MarketSpec:
+    """Reglas de tamaño de un mercado Kraken, leídas de /instruments.
+
+    Kraken no publica un tamaño mínimo aparte para los PF_: el tamaño debe ser
+    múltiplo de 10^-contractValueTradePrecision, así que el mínimo es un paso.
+    """
+
+    symbol: str
+    size_step: Decimal  # 10^-contractValueTradePrecision (p.ej. 0.0001 o 1000)
+    tick_size: Decimal
+    max_position_size: Decimal
+
+    def __post_init__(self) -> None:
+        if not (self.size_step > 0 and self.tick_size > 0 and self.max_position_size > 0):
+            raise ValueError(f"{self.symbol}: paso, tick y tamaño máximo deben ser > 0")
+
+    @property
+    def min_size(self) -> Decimal:
+        return self.size_step
+
+    def _round(self, size: Decimal, rounding: str) -> Decimal:
+        if size < 0:
+            raise ValueError("se redondean magnitudes, no tamaños con signo")
+        with localcontext(prec=60):
+            steps = (size / self.size_step).to_integral_value(rounding=rounding)
+            return steps * self.size_step
+
+    def round_down(self, size: Decimal) -> Decimal:
+        """Mayor múltiplo del paso que no supera `size`."""
+        return self._round(size, ROUND_FLOOR)
+
+    def round_up(self, size: Decimal) -> Decimal:
+        """Menor múltiplo del paso que no queda por debajo de `size`."""
+        return self._round(size, ROUND_CEILING)
