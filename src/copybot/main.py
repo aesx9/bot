@@ -30,6 +30,7 @@ from copybot.alerts import Alerter, Level, LogAlerter, TelegramAlerter
 from copybot.checks import (
     CheckReport,
     confirmation_record,
+    key_problem,
     live_check_valid,
     live_confirmation_valid,
     run_check,
@@ -42,7 +43,7 @@ from copybot.credentials import (
     load_telegram_credentials,
 )
 from copybot.engine import CycleReport, Engine, LoopTaskDied, Outcome
-from copybot.exchange.base import Exchange
+from copybot.exchange.base import Exchange, ExchangeError
 from copybot.exchange.kraken_auth import KrakenPrivateClient
 from copybot.exchange.kraken_public import KrakenMarketData
 from copybot.exchange.live import LiveExchange
@@ -156,7 +157,21 @@ async def run_bot(
             store.before_save = sync_paper
             exchange = PaperExchange(account, market, cfg.paper)
         else:
-            exchange = LiveExchange(KrakenPrivateClient(http, live_creds), state)
+            client = KrakenPrivateClient(http, live_creds)
+            try:
+                problem = await key_problem(client)
+            except ExchangeError as exc:
+                log.error("no se pudo verificar la clave API al arrancar (%s): no se opera", exc)
+                return EXIT_ERROR  # transitorio: systemd lo reintenta
+            if problem:
+                # Los permisos pueden haber cambiado desde el --check: se revalidan siempre
+                state.live_confirmation = None
+                state.live_check = None
+                store.save(state)
+                log.critical("la clave de Kraken ya no es válida para operar: %s", problem)
+                await alerter.alert(Level.CRITICAL, f"live NO arranca: {problem}")
+                return EXIT_USAGE
+            exchange = LiveExchange(client, state)
         engine = Engine(
             cfg=cfg, state=state, store=store, leader=HyperliquidInfo(http), market=market,
             exchange=exchange, recorder=CsvRecorder(data_dir), alerter=alerter,

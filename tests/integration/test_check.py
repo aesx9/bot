@@ -156,3 +156,35 @@ def test_evaluate_key_reads_both_cidr_fields() -> None:
                                       "allowedCidrBlocks": []})
     assert verdict == "ok" and cidrs == ["10.0.0.1/32"]
     assert evaluate_key("basura")[0] == "unverifiable"
+
+
+# --- M5: la puerta del --check ---
+
+
+async def test_failed_recheck_invalidates_the_previous_pass(h: Harness) -> None:
+    """PoC M: un --check que falla a medias dejaba vigente el anterior."""
+    assert (await h.run()).passed and live_check_valid(h.state, LIVE, CREDS) is None
+    h.kraken.key_check["permissions"]["transfer"] = "FULL_ACCESS"  # cambian en Kraken
+    h.kraken.fail_paths.add("/api/auth/v1/api-keys/v3/check")  # y el endpoint falla
+    report = await h.run()
+    assert not report.passed
+    assert h.state.live_check is None
+    assert live_check_valid(h.state, LIVE, CREDS) is not None
+
+
+async def test_key_is_revalidated_before_every_live_start(h: Harness) -> None:
+    from copybot.checks import key_problem
+    from copybot.exchange.base import ExchangeError
+
+    client = KrakenPrivateClient(h.http, CREDS)
+    assert await key_problem(client) is None
+    h.kraken.key_check["permissions"]["transfer"] = "READ_ONLY"
+    assert "transferencia/retiro" in (await key_problem(client) or "")
+    h.kraken.key_check["permissions"] = {"general": "FULL_ACCESS", "transfer": "NO_ACCESS"}
+    h.kraken.key_check["allowedCidrBlocks"] = []
+    assert await key_problem(client) is None  # verificable: la IP no es obligatoria
+    h.kraken.key_check["permissions"] = {}
+    assert "restricción de IP" in (await key_problem(client) or "")  # no verificable, sin IP
+    h.kraken.fail_paths.add("/api/auth/v1/api-keys/v3/check")
+    with pytest.raises(ExchangeError):
+        await key_problem(client)  # no se pudo consultar: no se da por bueno

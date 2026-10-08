@@ -106,6 +106,18 @@ def evaluate_key(payload: Any) -> tuple[str, str, list[str]]:
     return "ok", "lectura y trading; sin transferencias ni retiros", cidrs
 
 
+async def key_problem(client: KrakenPrivateClient) -> str | None:
+    """Revalida la clave en Kraken (se usa en CADA arranque live, también los de systemd):
+    None si sigue sin permiso de transferencia/retiro; si no, el motivo para no operar.
+    ExchangeError si no se pudo consultar (error transitorio: no se opera todavía)."""
+    verdict, detail, cidrs = evaluate_key(await client.request("GET", KEY_CHECK_PATH))
+    if verdict == "forbidden":
+        return detail
+    if verdict == "unverifiable" and not cidrs:
+        return detail + "; sin restricción de IP activa no se puede continuar"
+    return None
+
+
 async def run_check(
     *,
     cfg: Config,
@@ -118,6 +130,9 @@ async def run_check(
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> CheckReport:
     r = CheckReport()
+    # Un --check que empieza invalida el anterior: si este se interrumpe o falla a medias
+    # (red, endpoint de la clave caído) no puede quedar vigente un pase antiguo.
+    state.live_check = None
     r.add("modo", cfg.mode is Mode.LIVE, f"config en modo {cfg.mode.value}")
 
     # Kraken público

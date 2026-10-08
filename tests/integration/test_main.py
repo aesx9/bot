@@ -306,3 +306,26 @@ def test_legacy_single_directory_state_is_not_silently_ignored(
     (tmp_path / "data" / "state.json").write_text("{}")
     assert main(["--config", str(write_config(tmp_path)), "--status"]) == EXIT_USAGE
     assert "diseño anterior" in capsys.readouterr().err
+
+
+async def test_live_start_is_refused_if_the_key_gained_transfer_permission(
+    tmp_path: Path,
+) -> None:
+    """M5: el servicio reinicia sin terminal; los permisos de la clave se revalidan igual."""
+    import respx
+
+    from copybot.config import load_config
+    from tests.fake_kraken import CREDS, FakeKraken
+
+    cfg = load_config(write_config(tmp_path, 'mode = "live"'))
+    state = BotState(mode="live", live_confirmation={"x": 1}, live_check={"y": 1})
+    st = store(tmp_path, "live")
+    kraken = FakeKraken()
+    kraken.key_check["permissions"]["transfer"] = "FULL_ACCESS"
+    with respx.mock(assert_all_called=False) as router:
+        kraken.install(router)
+        rc = await main_mod.run_bot(cfg, state, st, True, tmp_path / ".env", CREDS)
+    assert rc == EXIT_USAGE
+    assert kraken.sends() == []
+    assert state.live_confirmation is None and state.live_check is None
+    assert st.load().live_confirmation is None
