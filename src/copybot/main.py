@@ -92,9 +92,10 @@ def confirm(phrase: str, prompt: Callable[[str], str] = input) -> bool:
         return False
 
 
-def status_text(state: BotState, cfg: Config) -> str:
+def status_text(state: BotState, cfg: Config, running: bool | None = None) -> str:
     info: dict[str, Any] = {
         "modo": cfg.mode.value,
+        "instancia_en_marcha": running,
         "detenido": state.halted,
         "motivo": state.halt_reason or None,
         "detenido_en": state.halted_at,
@@ -252,15 +253,23 @@ def main(argv: Sequence[str] | None = None, prompt: Callable[[str], str] = input
               "(paper o live), o bórralo si no hace falta.", file=sys.stderr)
         return EXIT_USAGE
     data_dir = cfg.run_dir
-    setup_logging(data_dir / "logs", external_rotation=cfg.logging.external_rotation)
     store = StateStore(data_dir / "state.json")
+    if args.status:
+        # Solo lectura: funciona con el servicio en marcha (state.json se escribe de forma
+        # atómica, así que nunca se lee a medias) y no crea ficheros ni toma el bloqueo.
+        try:
+            state = store.load()
+            state.bind_mode(cfg.mode.value)
+        except StateError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return EXIT_ERROR
+        print(status_text(state, cfg, running=InstanceLock.is_held(data_dir / "copybot.lock")))
+        return EXIT_OK
+    setup_logging(data_dir / "logs", external_rotation=cfg.logging.external_rotation)
     try:
         with InstanceLock(data_dir / "copybot.lock"):
             state = store.load()
             state.bind_mode(cfg.mode.value)
-            if args.status:
-                print(status_text(state, cfg))
-                return EXIT_OK
             if args.reset_halt:
                 if not state.halted:
                     print("El bot no está detenido.")

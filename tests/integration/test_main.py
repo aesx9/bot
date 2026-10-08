@@ -102,7 +102,27 @@ def test_release_startup_profile_requires_confirmation(tmp_path: Path) -> None:
 def test_second_instance_is_refused(tmp_path: Path) -> None:
     cfg = write_config(tmp_path)
     with InstanceLock(tmp_path / "data" / "paper" / "copybot.lock"):
-        assert main(["--config", str(cfg), "--status"]) == EXIT_ERROR
+        assert main(["--config", str(cfg), "--once"]) == EXIT_ERROR
+        assert main(["--config", str(cfg), "--reset-halt"]) == EXIT_ERROR
+
+
+def test_status_works_while_the_service_runs_and_says_so(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """M7: `copybot-cli --status` dejaba pasar el wrapper pero el bot lo rechazaba por el lock."""
+    cfg = write_config(tmp_path)
+    store(tmp_path).save(BotState(mode="paper", halted=True, halt_reason="drawdown"))
+    assert main(["--config", str(cfg), "--status"]) == EXIT_OK
+    assert json.loads(capsys.readouterr().out)["instancia_en_marcha"] is False
+    with InstanceLock(tmp_path / "data" / "paper" / "copybot.lock"):
+        assert main(["--config", str(cfg), "--status"]) == EXIT_OK
+        out = json.loads(capsys.readouterr().out)
+    assert out["instancia_en_marcha"] is True and out["detenido"] is True
+
+
+def test_status_creates_no_files(tmp_path: Path) -> None:
+    assert main(["--config", str(write_config(tmp_path)), "--status"]) == EXIT_OK
+    assert not (tmp_path / "data").exists()
 
 
 def test_corrupt_state_does_not_start(tmp_path: Path) -> None:

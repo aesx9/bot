@@ -163,7 +163,8 @@ El script ([`deploy/setup_vps.sh`](deploy/setup_vps.sh)) es idempotente y hace:
 
 - actualizaciones y parches de seguridad automáticos;
 - SSH solo con clave, sin root y solo para `ADMIN_USER`. Antes comprueba
-  que tienes clave para no dejarte fuera;
+  que tienes clave para no dejarte fuera y después verifica con `sshd -T` que la configuración
+  efectiva se aplica (otro fichero de `sshd_config.d` no puede anularla);
 - `ufw` cerrando todo lo entrante salvo SSH, y `fail2ban` para SSH;
 - usuario de sistema `copybot` sin privilegios ni shell;
 - entorno virtual con dependencias verificadas por hash;
@@ -182,7 +183,8 @@ El script ([`deploy/setup_vps.sh`](deploy/setup_vps.sh)) es idempotente y hace:
 
 Hay dos protecciones contra dos instancias a la vez:
 
-1. `copybot-cli` se niega a ejecutar nada que no sea `--status` mientras el
+1. `copybot-cli` se niega a ejecutar nada que no sea `--status` (solo lectura: no toma el bloqueo
+   y dice si hay una instancia en marcha) mientras el
    servicio está activo. Para hacer otra cosa:
    `sudo systemctl stop copybot`, después el comando, después
    `sudo systemctl start copybot`.

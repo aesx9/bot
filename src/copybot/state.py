@@ -206,6 +206,23 @@ class InstanceLock:
         os.write(fd, f"{os.getpid()}\n".encode())
         self._fd = fd
 
+    @staticmethod
+    def is_held(path: Path) -> bool:
+        """¿Hay otra instancia con el bloqueo? Solo mira: no toma el bloqueo exclusivo."""
+        try:
+            fd = os.open(path, os.O_RDONLY)
+        except FileNotFoundError:
+            return False
+        try:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            return False
+        finally:
+            os.close(fd)
+
     def release(self) -> None:
         if self._fd is not None:
             fcntl.flock(self._fd, fcntl.LOCK_UN)
