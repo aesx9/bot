@@ -292,6 +292,7 @@ se niega a arrancar si no coincide):
 | `equity.csv` | Capital propio y del líder, cada 15 minutos. |
 | `kraken_fills.csv` | **Solo live:** todos los fills reales de la cuenta, con origen. |
 | `fees.csv` | **Solo live:** comisiones reales del log de cuenta de Kraken, con su moneda. |
+| `funding_moneda.csv` | **Solo live:** funding que Kraken apunta en una moneda distinta de USD (EUR, otra o `DESCONOCIDA` si el log no permite saberla), con su moneda. El export convierte EUR con el BCE y se **bloquea** con cualquier otra hasta que corrijas la fila. `report` no lo incluye. |
 | `positions.csv` | **Solo live:** foto de las posiciones reales de Kraken, tomada en cada actualización del libro (cada ciclo, también con el bot detenido) pero escrita solo si cambian o, sin cambios, cada hora; el export fiscal las concilia con los fills. |
 
 **Vigilancia externa (recomendada en live):** el bot es su propio único canal de alerta, así
@@ -418,6 +419,8 @@ Genera cuatro ficheros:
   algún fill y el resultado de ese mercado no es fiable: el script lo avisa. Los fills,
   comisiones y funding repetidos en los CSV se cuentan una sola vez (por `fill_id` y
   `booking_uid`).
+
+El funding en EUR (`funding_moneda.csv`) se incluye con su importe exacto en EUR; si hay funding en otra moneda o en moneda desconocida, el export **no genera nada** y dice qué filas revisar.
 
 Conversión a EUR con el **tipo de referencia diario del BCE**, cada flujo en
 su fecha **en hora de Madrid** (también el año fiscal; los CSV siguen en UTC): el resultado, al tipo del día de cierre; cada comisión, al del día

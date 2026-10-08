@@ -83,7 +83,13 @@ SUMMARY_HEADER = (
 FUNDING_HEADER = (
     "timestamp_utc", "mercado", "importe_usd", "pagado_usd", "cobrado_usd",
     "fecha_tipo_bce", "tipo_eurusd_bce", "pagado_eur", "cobrado_eur", "fuente_tipo_cambio",
+    "moneda_original", "importe_original",
 )
+CONVERTIBLE = ("USD", "EUR")
+
+
+class FiscalError(Exception):
+    """El export no puede hacerse sin falsear algún importe (p. ej. funding en otra moneda)."""
 RECON_HEADER = ("foto_utc", "mercado", "neto_fills", "posicion_kraken", "diferencia", "estado")
 WINDOW = timedelta(seconds=2)  # margen de reloj entre fills y apuntes del log
 CENT = Decimal("0.01")
@@ -103,8 +109,19 @@ def money(v: Decimal) -> Decimal:
 class Funding:
     timestamp: datetime
     symbol: str
-    amount_usd: Decimal  # + cobrado, - pagado
+    amount: Decimal  # + cobrado, - pagado, en `currency`
+    currency: str = "USD"  # USD (funding.csv) o la de funding_moneda.csv
     used: bool = False  # asignado ya a una posición: un funding se cuenta una sola vez
+
+    def usd_eur(self, rates: ecb.RateTable) -> tuple[Decimal, Decimal]:
+        """(USD, EUR) con signo, al tipo del BCE del día del pago (en Madrid). El importe en
+        su moneda original es exacto; el otro se convierte."""
+        if self.currency == "EUR":
+            rate, _ = rates.rate_for(local_date(self.timestamp))
+            return self.amount * rate, self.amount
+        if self.currency != "USD":
+            raise FiscalError(f"funding en {self.currency}: no se puede convertir")
+        return self.amount, rates.usd_to_eur(self.amount, local_date(self.timestamp))[0]
 
 
 @dataclass
@@ -218,6 +235,11 @@ def load_live_data(data_dir: Path) -> LiveData:
                            "funding.csv (por booking_uid)", notes)
     funding = [Funding(ts(r["timestamp_utc"]), r["mercado"], Decimal(r["importe_usd"]))
                for r in live_funding]
+    other_funding = _unique([r for r in read_rows(data_dir / "funding_moneda.csv")
+                             if r.get("modo") == "live"], lambda r: r.get("booking_uid"),
+                            "funding_moneda.csv (por booking_uid)", notes)
+    funding += [Funding(ts(r["timestamp_utc"]), r["mercado"], Decimal(r["importe"]),
+                        (r.get("moneda") or "").upper()) for r in other_funding]
     by_time: dict[str, dict[str, Decimal]] = {}
     for r in read_rows(data_dir / "positions.csv"):
         if r.get("modo") != "live":
@@ -307,16 +329,20 @@ def amounts(r: FiscalRow, rates: ecb.RateTable) -> Amounts:
             a.fees_usd += fee.amount
             a.fees_eur += fee.amount / rate
     for fund in r.funding:
-        if fund.amount_usd == 0:
-            continue
-        eur = rates.usd_to_eur(abs(fund.amount_usd), local_date(fund.timestamp))[0]
-        if fund.amount_usd < 0:
-            a.paid_usd += -fund.amount_usd
-            a.paid_eur += eur
-        else:
-            a.received_usd += fund.amount_usd
-            a.received_eur += eur
+        _add_funding(a, fund, rates)
     return a
+
+
+def _add_funding(a: Amounts, fund: Funding, rates: ecb.RateTable) -> None:
+    if fund.amount == 0:
+        return
+    usd, eur = fund.usd_eur(rates)
+    if fund.amount < 0:
+        a.paid_usd += -usd
+        a.paid_eur += -eur
+    else:
+        a.received_usd += usd
+        a.received_eur += eur
 
 
 def _source(rates: ecb.RateTable) -> str:
@@ -357,15 +383,7 @@ def summarize(rows: list[FiscalRow], funding: list[Funding],
     by["TOTAL posiciones cerradas"] = total
     year_funding = Amounts()
     for f in funding:
-        if f.amount_usd == 0:
-            continue
-        eur = rates.usd_to_eur(abs(f.amount_usd), local_date(f.timestamp))[0]
-        if f.amount_usd < 0:
-            year_funding.paid_usd += -f.amount_usd
-            year_funding.paid_eur += eur
-        else:
-            year_funding.received_usd += f.amount_usd
-            year_funding.received_eur += eur
+        _add_funding(year_funding, f, rates)
     by["funding total del año (fiscal_funding)"] = year_funding
     return by
 
@@ -389,12 +407,11 @@ def write_funding(path: Path, funding: list[Funding], rates: ecb.RateTable) -> N
         w.writerow(FUNDING_HEADER)
         for f in sorted(funding, key=lambda f: f.timestamp):
             rate, rate_day = rates.rate_for(local_date(f.timestamp))
-            paid = -f.amount_usd if f.amount_usd < 0 else ZERO
-            received = f.amount_usd if f.amount_usd > 0 else ZERO
+            usd, eur = f.usd_eur(rates)
             w.writerow([
-                f.timestamp.isoformat(), f.symbol, f.amount_usd, paid, received,
-                rate_day.isoformat(), rate, money(paid / rate),
-                money(received / rate), _source(rates),
+                f.timestamp.isoformat(), f.symbol, usd, max(-usd, ZERO), max(usd, ZERO),
+                rate_day.isoformat(), rate, money(max(-eur, ZERO)), money(max(eur, ZERO)),
+                _source(rates), f.currency, f.amount,
             ])
 
 
@@ -414,6 +431,18 @@ def export(data_dir: Path, year: int, out_dir: Path,
     rows = assign(data.closed, data.fees, funding)
     rows = [r for r in rows if r.position.closed_at and madrid(r.position.closed_at).year == year]
     year_funding = [f for f in funding if madrid(f.timestamp).year == year]
+    # Funding en una moneda que no se sabe convertir (ni USD ni EUR, o desconocida): el export
+    # se bloquea antes de escribir nada; declarar sin él falsearía el funding pagado/cobrado
+    blocked = sorted({(f.timestamp.isoformat(), f.symbol, f.currency or "DESCONOCIDA",
+                       str(f.amount))
+                      for f in year_funding + [f for r in rows for f in r.funding]
+                      if f.currency not in CONVERTIBLE})
+    if blocked:
+        raise FiscalError(
+            "funding en una moneda que el export no sabe convertir (funding_moneda.csv): "
+            + "; ".join(f"{t} {s} {amt} {cur}" for t, s, cur, amt in blocked)
+            + ". Concílialo con el log de Kraken y corrige la fila (importe y moneda USD o "
+            "EUR) antes de exportar")
     notes = list(data.notes)
     notes += [f"posición abierta en {p.symbol} desde {p.opened_at.isoformat()}: no se declara "
               "hasta que se cierre" for p in data.open_.values()]
@@ -460,6 +489,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                                            rates)
     except ecb.RateError as exc:
         print(f"error con los tipos del BCE: {exc}", file=sys.stderr)
+        return 1
+    except FiscalError as exc:
+        print(f"export fiscal BLOQUEADO: {exc}", file=sys.stderr)
         return 1
     print(f"Escrito {pos}\nEscrito {fund}\nEscrito {summary}")
     print(f"Escrito {summary.with_name(f'fiscal_conciliacion_{args.year}.csv')}")

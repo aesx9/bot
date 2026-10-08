@@ -155,12 +155,12 @@ async def test_funding_follows_real_timestamps_and_sign() -> None:
     ]
     balance0 = ex.account.usd_balance
     events = await ex.collect_funding(NOW + timedelta(hours=2, minutes=5))
-    assert [e.amount_usd for e in events] == [D("-0.10"), D("0.20")]
+    assert [e.amount for e in events] == [D("-0.10"), D("0.20")]
     assert ex.account.usd_balance - balance0 == D("0.10")
     # Sin cobros dobles al volver a consultar
     assert await ex.collect_funding(NOW + timedelta(hours=2, minutes=30)) == []
     later = await ex.collect_funding(NOW + timedelta(hours=3))
-    assert [e.amount_usd for e in later] == [D("-0.30")]
+    assert [e.amount for e in later] == [D("-0.30")]
 
 
 async def test_short_receives_positive_funding_and_disabled_funding() -> None:
@@ -168,7 +168,7 @@ async def test_short_receives_positive_funding_and_disabled_funding() -> None:
     await ex.send_order(req(Side.SELL, "10", "1"))
     m.funding[SOL] = [FundingRate(NOW + timedelta(hours=1), D("0.01"))]
     events = await ex.collect_funding(NOW + timedelta(hours=1))
-    assert [e.amount_usd for e in events] == [D("0.10")]
+    assert [e.amount for e in events] == [D("0.10")]
     ex2, m2 = make(PaperConfig(simulate_funding=False))
     await ex2.send_order(req(Side.BUY, "1", "200"))
     m2.funding[SOL] = m.funding[SOL]

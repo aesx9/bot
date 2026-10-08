@@ -355,6 +355,9 @@ pública real:
   (`fiscal_conciliacion_<año>.csv`), avisando si no cuadra.
 - Moneda y signo: cada entrada del log se interpreta en su moneda (colateral o
   activo). El funding que no es USD no se escribe en `funding.csv` y se avisa;
+  (Segunda auditoría, N4) ahora va a `funding_moneda.csv` con su moneda: el export
+  convierte EUR y se bloquea con otra; si `collateral` y `asset` discrepan, la moneda
+  queda DESCONOCIDA y se avisa;
   las comisiones se guardan con su moneda real (EUR se convierte en el export,
   otras se avisan) y se alerta de una comisión negativa o de signo invertido.
 - (Segunda auditoría, N5) Un fill de origen `stop_catastrofe` o `liquidación` detiene el

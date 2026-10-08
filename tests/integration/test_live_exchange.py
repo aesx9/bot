@@ -150,7 +150,7 @@ async def test_funding_from_account_log(env: Env) -> None:
     assert await env.live.collect_funding(NOW + timedelta(seconds=60)) == []  # limitado
     events = await env.live.collect_funding(NOW + timedelta(minutes=6))
     env.live.commit_ledger()
-    assert [(e.symbol, e.amount_usd) for e in events] == [(BTC, D("-0.5")), (BTC, D("0.2"))]
+    assert [(e.symbol, e.amount) for e in events] == [(BTC, D("-0.5")), (BTC, D("0.2"))]
     query = [p for _, path, p in env.kraken.calls if "account-log" in path][-1]
     assert query["sort"] == "asc"
     again = await env.live.collect_funding(NOW + timedelta(minutes=12))
@@ -308,7 +308,7 @@ async def test_malformed_account_log_entries_are_skipped_with_an_alert(env: Env)
         ok,
     ]
     events = await env.live.collect_funding(NOW + timedelta(minutes=6))
-    assert [e.amount_usd for e in events] == [D("-0.5")]
+    assert [e.amount for e in events] == [D("-0.5")]
     alerts = env.live.drain_alerts()
     assert len(alerts) == 2 and all("account-log" in a for a in alerts)
     env.live.commit_ledger()

@@ -51,8 +51,11 @@ class FundingEvent:
     symbol: str
     position: Decimal  # tamaño con signo al aplicarse
     rate: Decimal  # absoluto, USD por unidad
-    amount_usd: Decimal  # + cobrado, - pagado
+    amount: Decimal  # + cobrado, - pagado, en `currency`
     booking_uid: str = ""  # id del apunte en el log de cuenta (live): permite no duplicar
+    # USD salvo funding live en otra moneda (EUR, o DESCONOCIDA si el log no permite saberla):
+    # ese va a funding_moneda.csv, nunca a funding.csv etiquetado USD
+    currency: str = "USD"
 
 
 class Exchange(Protocol):

@@ -36,6 +36,10 @@ def fee_at(ms_after_start: int, uid: str, fee: str = "0.1") -> dict[str, Any]:
             "collateral": "USD", "booking_uid": uid}
 
 
+def rows(path: Path) -> list[dict[str, str]]:
+    return list(csv.DictReader(path.open())) if path.exists() else []
+
+
 async def started(env: Env) -> None:  # noqa: F811
     await env.live.prepare_ledger(NOW)  # línea base: nada anterior se importa
 
@@ -229,22 +233,50 @@ def funding_entry(ms: int, uid: str, **extra: Any) -> dict[str, Any]:
     return {k: v for k, v in e.items() if v is not None}
 
 
-async def test_funding_in_another_currency_is_not_recorded_as_usd(env: Env) -> None:  # noqa: F811
-    """Auditoría M4: el funding se etiquetaba USD sin mirar `asset`: 0.001 XBT pasaba por
-    0.001 USD en funding.csv y falseaba el funding pagado/cobrado."""
+async def test_funding_in_another_currency_is_kept_with_its_currency(
+        env: Env, tmp_path: Path) -> None:  # noqa: F811
+    """N4 (PoC P1): el funding que no era USD solo quedaba en una alerta (y en el log, que
+    rota); su booking_uid se marcaba visto y nunca volvía. Ahora va a funding_moneda.csv con
+    su moneda; avisa si no es USD ni EUR (el export no podría convertirlo)."""
+    from copybot.engine import update_ledger
+
     await started(env)
     env.kraken.logs = [
         funding_entry(1000, "usd", asset="usd"),
         funding_entry(2000, "xbt", asset="xbt", old_balance="0.01", new_balance="0.009"),
-        funding_entry(3000, "eur", asset="usd", collateral="EUR"),  # el colateral manda
+        funding_entry(3000, "eur", collateral="EUR", asset="eur"),
         funding_entry(4000, "none"),  # sin moneda: no se supone USD
     ]
+    rec = CsvRecorder(tmp_path)
+    update = await update_ledger(env.live, rec, NOW + timedelta(minutes=6))
+    assert update.funding == 4
+    usd = rows(tmp_path / "funding.csv")
+    other = rows(tmp_path / "funding_moneda.csv")
+    assert [r["booking_uid"] for r in usd] == ["usd"]
+    assert {r["booking_uid"]: (r["moneda"], r["importe"]) for r in other} == {
+        "xbt": ("XBT", "-0.001"), "eur": ("EUR", "-0.5"), "none": ("DESCONOCIDA", "-0.5")}
+    assert [a for a in update.alerts if "MONEDA DEL FUNDING" in a] and not any(
+        "booking_uid='eur'" in a for a in update.alerts)  # EUR lo convierte el export
+    assert any("XBT" in a for a in update.alerts) and any("DESCONOCIDA" in a
+                                                          for a in update.alerts)
+    # idempotente por booking_uid, también en el CSV nuevo
+    rec.funding(FundingEvent(NOW, "PF_XBTUSD", D(0), D(0), D("-0.5"), "eur", "EUR"), "live")
+    assert len(rows(tmp_path / "funding_moneda.csv")) == 3
+
+
+async def test_collateral_and_asset_disagreeing_is_unknown_and_alerts(
+        env: Env) -> None:  # noqa: F811
+    """N4: con `collateral` y `asset` distintos se elegía `collateral` en silencio; si era el
+    equivocado, las comisiones en USD se convertían como EUR sin ningún aviso."""
+    await started(env)
+    env.kraken.logs = [funding_entry(1000, "f", asset="usd", collateral="EUR"),
+                       {**fee_at(2000, "c"), "collateral": "EUR", "asset": "usd"}]
     events = await env.live.collect_funding(NOW + timedelta(minutes=6))
-    assert [e.booking_uid for e in events] == ["usd"]
+    _, fees = env.live.drain_ledger()
+    assert [e.currency for e in events] == ["DESCONOCIDA"]
+    assert [f["currency"] for f in fees] == ["DESCONOCIDA"]
     alerts = env.live.drain_alerts()
-    assert len(alerts) == 3 and all("MONEDA DEL FUNDING" in a for a in alerts)
-    assert any("XBT" in a and "-0.001" in a and "xbt" in a for a in alerts)
-    assert any("EUR" in a for a in alerts) and any("DESCONOCIDA" in a for a in alerts)
+    assert sum("DISCREPAN" in a and "EUR" in a and "USD" in a for a in alerts) == 2
 
 
 async def test_fee_currency_is_recorded_and_never_assumed_usd(env: Env) -> None:  # noqa: F811

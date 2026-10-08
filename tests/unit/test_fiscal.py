@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from copybot.analysis import ecb
-from copybot.analysis.fiscal import export, main
+from copybot.analysis.fiscal import FiscalError, export, main
 from copybot.exchange.base import FundingEvent
 from copybot.records import CsvRecorder, TradeRecord
 from tests.unit.test_ecb import SDMX
@@ -381,3 +381,37 @@ def test_fees_without_currency_or_in_other_currencies_are_not_counted_as_usd(
     assert p["comisiones_usd"] == "1.00"  # solo la que dice USD
     assert p["avisos"].count("sin convertir") == 3
     assert "XBT" in p["avisos"] and "moneda desconocida" in p["avisos"]
+
+
+# --- N4: funding en otra moneda ---
+
+
+def test_eur_funding_is_converted_with_the_ecb_rate_of_its_day(tmp_path: Path) -> None:
+    """N4: el funding en EUR (funding_moneda.csv) entra en el export: el importe en EUR es
+    exacto y el USD se obtiene con el tipo del BCE del día del pago."""
+    rec = CsvRecorder(tmp_path)
+    fill(rec, FRI, "buy", "0.01", "80000")
+    fill(rec, FRI + timedelta(days=1), "sell", "0.01", "90000")
+    rec.funding(FundingEvent(FRI + timedelta(hours=1), "PF_XBTUSD", D("0.01"), D(1),
+                             D("-2.00"), "e1", "EUR"), "live")
+    pos_path, fund_path, sum_path, _ = export(tmp_path, 2026, tmp_path / "out", RATES)
+    [p] = rows(pos_path)
+    assert (p["funding_pagado_eur"], p["funding_pagado_usd"]) == ("2.00", "2.33")  # 2 x 1.165
+    [f] = rows(fund_path)
+    assert (f["moneda_original"], f["importe_original"], f["pagado_eur"]) == ("EUR", "-2.00",
+                                                                              "2.00")
+    total = [r for r in rows(sum_path) if r["categoria"].startswith("funding total")][0]
+    assert total["funding_pagado_eur"] == "2.00"
+
+
+@pytest.mark.parametrize("currency", ["XBT", "DESCONOCIDA"])
+def test_funding_in_an_unconvertible_currency_blocks_the_export(
+        tmp_path: Path, currency: str, capsys: pytest.CaptureFixture[str]) -> None:
+    rec = CsvRecorder(tmp_path)
+    rec.funding(FundingEvent(FRI, "PF_XBTUSD", D("0.01"), D(1), D("-0.001"), "x", currency),
+                "live")
+    with pytest.raises(FiscalError, match=currency):
+        export(tmp_path, 2026, tmp_path / "out", RATES)
+    assert not (tmp_path / "out").exists() or not list((tmp_path / "out").glob("fiscal_*"))
+    assert main(["--year", "2026", "--data-dir", str(tmp_path)]) == 1
+    assert currency in capsys.readouterr().err

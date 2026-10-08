@@ -136,11 +136,19 @@ UNKNOWN_CURRENCY = "DESCONOCIDA"
 CONVERTIBLE = ("USD", "EUR")  # el export fiscal convierte EUR con el tipo del BCE
 
 
-def _currency(e: Mapping[str, Any]) -> str:
-    """Moneda en la que están el saldo, la comisión y el funding de una entrada del log:
-    el colateral (cuentas multi-colateral) o, si falta, el activo. Vacía si no consta:
-    nunca se supone USD."""
-    return str(e.get("collateral") or e.get("asset") or "").upper()
+def _currency(e: Mapping[str, Any]) -> tuple[str, str]:
+    """(moneda, aviso) de una entrada del log: la moneda en que están el saldo, la comisión y
+    el funding. Sale de `collateral` o de `asset` (el que venga); vacía si no consta (nunca se
+    supone USD). Si vienen los dos y DISCREPAN no se elige ninguno en silencio: la moneda queda
+    desconocida y se devuelve un aviso (hasta verificar el formato real del log)."""
+    collateral = str(e.get("collateral") or "").upper()
+    asset = str(e.get("asset") or "").upper()
+    if collateral and asset and collateral != asset:
+        return "", (f"MONEDA: collateral={collateral} y asset={asset} DISCREPAN en "
+                    f"[date={e.get('date')!r}, info={e.get('info')!r}, "
+                    f"booking_uid={e.get('booking_uid')!r}]: se registra como "
+                    f"{UNKNOWN_CURRENCY}; revisa el formato del log de Kraken")
+    return collateral or asset, ""
 
 
 def _log_uid(e: Mapping[str, Any]) -> str:
@@ -397,11 +405,11 @@ class LiveExchange:
         if ts.tzinfo is None:
             raise ValueError("fecha sin zona horaria")
         symbol = str(e.get("contract") or "").upper()
-        currency = _currency(e)
+        currency, problem = _currency(e)
+        if problem:
+            self.alerts.append(problem)
         if e.get("info") == "funding rate change":
-            event = self._funding_event(e, ts, symbol, currency)
-            if event is not None:
-                events.append(event)
+            events.append(self._funding_event(e, ts, symbol, currency))
         elif e.get("fee") is not None:
             fee = _dec(e["fee"], "comisión")
             self._check_fee(e, symbol, fee, currency)
@@ -434,24 +442,25 @@ class LiveExchange:
                 "Se registra tal cual; revisa fees.csv" for p in problems)
 
     def _funding_event(self, e: Mapping[str, Any], ts: datetime, symbol: str,
-                       currency: str) -> FundingEvent | None:
+                       currency: str) -> FundingEvent:
         rate = _dec(e.get("funding_rate") or 0, "funding")
         realized = _dec(e.get("realized_funding") or 0, "funding")
         if e.get("old_balance") is not None and e.get("new_balance") is not None:
             amount = _dec(e["new_balance"], "funding") - _dec(e["old_balance"], "funding")
         else:
             amount = realized
-        if currency != "USD":
-            # funding.csv guarda USD: etiquetar así un importe en otra moneda falsearía el
-            # funding pagado/cobrado. No se registra y se avisa con todos los datos.
+        currency = currency or UNKNOWN_CURRENCY
+        if currency not in CONVERTIBLE:
+            # Se guarda con su moneda (funding_moneda.csv) y no se etiqueta USD; el export
+            # fiscal no puede convertirlo y se bloquea hasta que se concilie a mano
             self.alerts.append(
-                f"MONEDA DEL FUNDING: {symbol} {amount} {currency or UNKNOWN_CURRENCY} el "
-                f"{_iso_ms(ts)} [booking_uid={e.get('booking_uid')!r}]: no es USD; NO se "
-                "registra en funding.csv (concílialo a mano con el log de Kraken)")
-            return None
+                f"MONEDA DEL FUNDING: {symbol} {amount} {currency} el {_iso_ms(ts)} "
+                f"[booking_uid={e.get('booking_uid')!r}]: no es USD ni EUR; se guarda en "
+                "funding_moneda.csv y el export fiscal se bloqueará hasta conciliarlo a mano")
         position = self._positions.get(symbol, ZERO)
         self._check_funding_sign(symbol, position, rate, amount, realized)
-        return FundingEvent(ts, symbol, position, rate, amount, booking_uid=_log_uid(e))
+        return FundingEvent(ts, symbol, position, rate, amount, booking_uid=_log_uid(e),
+                            currency=currency)
 
     def _check_funding_sign(self, symbol: str, position: Decimal, rate: Decimal,
                             amount: Decimal, realized: Decimal) -> None:

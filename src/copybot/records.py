@@ -42,6 +42,12 @@ KRAKEN_FILLS_HEADER = (
     "cli_ord_id", "fill_id", "order_id",
 )
 FEES_HEADER = ("timestamp_utc", "mercado", "comision", "moneda", "concepto", "booking_uid")
+# Funding live que no es USD (EUR, otra moneda o DESCONOCIDA), con su moneda: el export
+# fiscal convierte EUR y se bloquea con cualquier otra
+FUNDING_FX_HEADER = (
+    "timestamp_utc", "modo", "mercado", "posicion", "tasa", "importe", "moneda", "pagado",
+    "cobrado", "booking_uid",
+)
 EQUITY_HEADER = ("timestamp_utc", "modo", "capital_propio_usd", "capital_lider_usd")
 # Posiciones reales del exchange en un instante (solo live): el export fiscal las concilia
 # con el neto de los fills. Cuenta sin posiciones = una fila con mercado vacío y tamaño 0.
@@ -142,15 +148,21 @@ class CsvRecorder:
         known.add(r.cli_ord_id)
 
     def funding(self, e: FundingEvent, mode: str) -> None:
-        known = self._known("funding.csv", lambda r: r.get("booking_uid", ""))
+        """USD a funding.csv; cualquier otra moneda a funding_moneda.csv, con la moneda."""
+        name, header = (("funding.csv", FUNDING_HEADER) if e.currency == "USD"
+                        else ("funding_moneda.csv", FUNDING_FX_HEADER))
+        known = self._known(name, lambda r: r.get("booking_uid", ""))
         if e.booking_uid and e.booking_uid in known:
             return  # idempotente por booking_uid (el funding de paper no lo trae)
-        paid = -e.amount_usd if e.amount_usd < 0 else Decimal(0)
-        received = e.amount_usd if e.amount_usd > 0 else Decimal(0)
-        self._append("funding.csv", FUNDING_HEADER, (
-            e.timestamp, mode, e.symbol, e.position, e.rate, e.amount_usd, paid, received,
-            e.booking_uid,
-        ))
+        paid = -e.amount if e.amount < 0 else Decimal(0)
+        received = e.amount if e.amount > 0 else Decimal(0)
+        if e.currency == "USD":
+            row: tuple[object, ...] = (e.timestamp, mode, e.symbol, e.position, e.rate, e.amount,
+                                       paid, received, e.booking_uid)
+        else:
+            row = (e.timestamp, mode, e.symbol, e.position, e.rate, e.amount, e.currency, paid,
+                   received, e.booking_uid)
+        self._append(name, header, row)
         if e.booking_uid:
             known.add(e.booking_uid)
 
