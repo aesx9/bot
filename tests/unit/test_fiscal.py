@@ -200,3 +200,42 @@ def test_position_closed_at_year_end_utc_belongs_to_the_next_year_in_spain(tmp_p
     # 1 de enero no es hábil para el BCE: se usa el último tipo anterior (31/12)
     assert (p["fecha_tipo_bce_cierre"], p["tipo_eurusd_bce_cierre"]) == ("2025-12-31", "1.1750")
     assert p["cierre_utc"].startswith("2025-12-31T23:30")  # los CSV siguen en UTC
+
+
+# --- B4: export atómico y funding contado una vez ---
+
+
+def test_failed_rate_lookup_leaves_no_partial_files_and_keeps_the_previous_export(
+    tmp_path: Path, data: Path
+) -> None:
+    out = data / "out"
+    export(data, 2026, out, RATES)
+    before = {p.name: p.read_bytes() for p in out.iterdir()}
+    assert len(before) == 3
+    old_rates = ecb.parse_rates("TIME_PERIOD,OBS_VALUE\n2026-09-01,1.1650\n", "demasiado vieja")
+    with pytest.raises(ecb.RateError):
+        export(data, 2026, out, old_rates)  # no hay tipo en los 7 días anteriores
+    assert {p.name: p.read_bytes() for p in out.iterdir()} == before  # ni parciales ni mezcla
+
+
+def test_export_files_are_private(data: Path) -> None:
+    import stat
+
+    for p in export(data, 2026, data / "out", RATES)[:3]:
+        assert stat.S_IMODE(p.stat().st_mode) == 0o600
+
+
+def test_funding_at_a_direction_change_is_counted_once_and_by_the_open_position(
+    tmp_path: Path,
+) -> None:
+    rec = CsvRecorder(tmp_path)
+    t1 = FRI + timedelta(hours=1)
+    fill(rec, FRI, "buy", "1", "100", sym="PF_SOLUSD")
+    fill(rec, t1, "sell", "2", "100", sym="PF_SOLUSD")  # cierra el largo y abre un corto de 1
+    fill(rec, FRI + timedelta(hours=3), "buy", "1", "100", sym="PF_SOLUSD")
+    rec.funding(FundingEvent(t1 + timedelta(seconds=1), "PF_SOLUSD", D(-1), D(1), D("-3.00")),
+                "live")
+    pos, _, _, _ = export(tmp_path, 2026, tmp_path / "out", RATES)
+    paid = {r["direccion"]: D(r["funding_pagado_usd"]) for r in rows(pos)}
+    # una sola vez, y en el corto, que es la posición abierta cuando se paga
+    assert paid == {"largo": D("0.00"), "corto": D("3.00")}

@@ -37,7 +37,9 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import sys
+import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -93,6 +95,7 @@ class Funding:
     timestamp: datetime
     symbol: str
     amount_usd: Decimal  # + cobrado, - pagado
+    used: bool = False  # asignado ya a una posición: un funding se cuenta una sola vez
 
 
 @dataclass
@@ -167,8 +170,13 @@ def assign(closed: list[Position], fees: list[Fee], funding: list[Funding]) -> l
                 row.fees.append(f)
             else:
                 row.warnings.append(f"comisión de {f.amount} {f.currency} sin convertir")
-        row.funding = [f for f in funding
-                       if f.symbol == p.symbol and p.opened_at < f.timestamp <= hi]
+        # Un funding pertenece a la posición ABIERTA cuando se paga (sin margen de reloj:
+        # a diferencia de las comisiones, no depende de casar un fill con su apunte) y solo
+        # a una: en un cambio de dirección el cierre y la apertura comparten instante.
+        row.funding = [f for f in funding if not f.used and f.symbol == p.symbol
+                       and p.opened_at < f.timestamp <= p.closed_at]
+        for fund in row.funding:
+            fund.used = True
         rows.append(row)
     return rows
 
@@ -297,9 +305,16 @@ def export(data_dir: Path, year: int, out_dir: Path,
     pos_path = out_dir / f"fiscal_posiciones_{year}.csv"
     fund_path = out_dir / f"fiscal_funding_{year}.csv"
     sum_path = out_dir / f"fiscal_resumen_{year}.csv"
-    write_positions(pos_path, rows, rates)
-    write_funding(fund_path, year_funding, rates)
-    write_summary(sum_path, summarize(rows, year_funding, rates), rates)
+    # Los tres ficheros se generan primero aparte: si falta un tipo del BCE a mitad de camino
+    # no queda ningún fichero a medias ni una mezcla de ficheros nuevos y viejos.
+    with tempfile.TemporaryDirectory(dir=out_dir, prefix=".fiscal.") as tmp:
+        staging = Path(tmp)
+        write_positions(staging / pos_path.name, rows, rates)
+        write_funding(staging / fund_path.name, year_funding, rates)
+        write_summary(staging / sum_path.name, summarize(rows, year_funding, rates), rates)
+        for final in (pos_path, fund_path, sum_path):
+            (staging / final.name).chmod(0o600)  # datos personales de tributación
+            os.replace(staging / final.name, final)
     return pos_path, fund_path, sum_path, notes
 
 
