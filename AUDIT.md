@@ -42,7 +42,7 @@
 | A4 | Alta | Los fills del primer ciclo live no entran en el libro fiscal | A | resuelto (`d59f8ef`) |
 | A5 | Alta | Cierre de emergencia frágil | I, K | resuelto (`e9a7925`) |
 | M1 | Media | Tamaños y precios en notación científica en `sendorder` | formato | resuelto (`b5fc7d0`) |
-| M2 | Media | Stops de catástrofe: tarde, reemplazo no atómico, sobreviven al cierre | G, G2, L | pendiente |
+| M2 | Media | Stops de catástrofe: tarde, reemplazo no atómico, sobreviven al cierre | G, G2, L | resuelto (`29da910`) |
 | M3 | Media | Libro fiscal sin deduplicación ni conciliación | D | pendiente |
 | M4 | Media | Moneda y signo de funding y comisiones sin verificar | (lectura) | pendiente |
 | M5 | Media | Puerta `--check` mal invalidada y sin revalidar permisos | M | pendiente |
@@ -153,12 +153,13 @@ la pérdida; las altas debilitan justo las redes de seguridad.
 - **Regresión:** tests/integration/test_live_exchange.py::test_negative_precision_market_sends_positional_decimals y ::test_stop_prices_and_sizes_are_positional; tests/unit/test_records.py::test_decimals_are_written_without_scientific_notation
 
 ### M2 — Stops de catástrofe
-**Gravedad:** media · **Estado:** pendiente
+**Gravedad:** media · **Estado:** resuelto en `29da910`
 
 Se sincronizan después de ejecutar y de `_after_trading` (PoC G2); el reemplazo
 cancela antes de colocar (PoC G); el stop `cs-` sigue en el exchange tras el
 cierre de emergencia (PoC L). Corrección: sincronizar justo tras ejecutar,
 colocar antes de cancelar y cancelar al cerrar.
+- **Regresión:** tests/integration/test_live_exchange.py::test_failed_replacement_keeps_the_old_stop, ::test_new_stop_is_placed_before_the_old_one_is_cancelled, ::test_replacement_falls_back_when_the_exchange_allows_one_stop_per_symbol, ::test_error_after_trading_does_not_skip_the_stop_sync, ::test_kill_switch_cancels_the_catastrophe_stops
 
 ### M3 — Libro fiscal sin deduplicación ni conciliación
 **Gravedad:** media · **Estado:** pendiente
