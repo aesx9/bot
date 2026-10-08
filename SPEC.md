@@ -367,14 +367,17 @@ pública real:
   - 8 posiciones simultáneas como máximo.
 
   Se ordena por Sharpe anualizado (raíz de 365) de los últimos 30 días.
-- **Leaderboard** (`stats-data.hyperliquid.xyz`): no es oficial y está
-  bloqueado desde el entorno de desarrollo. Formato sin verificar; se usa solo
-  con `--leaderboard` y se marca como no oficial en la salida.
-- **BCE** (`data-api.ecb.europa.eu`, serie EXR.D.USD.EUR.SP00.A): bloqueado
-  desde el entorno de desarrollo. El formato SDMX-CSV (`TIME_PERIOD`,
-  `OBS_VALUE`) y el de `eurofxref-hist.csv` (`Date`, `USD`) se han
-  implementado según la documentación pública del BCE y hay que comprobarlos
-  en el VPS. Alternativa sin red: `--ecb-csv` con el fichero descargado.
+- **Leaderboard** (`stats-data.hyperliquid.xyz`): no es oficial. Formato
+  verificado el 2026-10-08 contra la respuesta real (`leaderboardRows` con
+  `ethAddress`, `accountValue` y `windowPerformances` como pares
+  `[ventana, {pnl, roi, vlm}]`, todo en cadenas); se usa solo con
+  `--leaderboard` y se marca como no oficial en la salida.
+- **BCE** (`data-api.ecb.europa.eu`, serie EXR.D.USD.EUR.SP00.A): el formato
+  SDMX-CSV (`TIME_PERIOD`, `OBS_VALUE`) está verificado el 2026-10-08 contra la
+  respuesta real; un periodo sin datos responde 200 con cuerpo vacío. El de
+  `eurofxref-hist.csv` (`Date`, `USD`) sigue sin comprobar
+  (`www.ecb.europa.eu` estaba bloqueado) y se mantiene según la documentación
+  pública del BCE. Alternativa sin red: `--ecb-csv` con el fichero descargado.
   - Los días sin tipo publicado se usa el último anterior (hasta 7 días
     atrás) y el fichero indica qué fecha se ha usado.
 - **Export fiscal:** se basa en fills reales (`kraken_fills.csv`), comisiones
@@ -397,6 +400,8 @@ pública real:
 3. El usuario añadió `data-api.ecb.europa.eu`, `stats-data.hyperliquid.xyz` y
    `api.telegram.org` a los dominios permitidos. En esta sesión el proxy sigue
    respondiendo 403 a los tres, así que los formatos reales del BCE y del
-   leaderboard siguen pendientes de verificar.
+   leaderboard seguían pendientes de verificar. Resuelto el 2026-10-08: los
+   tres dominios responden y ambos formatos coinciden con lo implementado
+   (fixtures `ecb_sdmx_real.txt` y `hl_leaderboard.json`).
 4. Primer arranque live a mano y después systemd. Documentado en el README,
    con cómo evitar dos instancias a la vez.

@@ -412,10 +412,11 @@ sudo systemctl start copybot
 
 - **Live nunca se ha ejecutado con dinero real.** Está probado contra una API
   privada de Kraken simulada a partir de la documentación oficial.
-- **Pendientes de verificar contra el servicio real:** los formatos de la API
-  de tipos del BCE y del leaderboard no oficial (dominios bloqueados en el
-  entorno de desarrollo), y el signo del funding real (el bot lo comprueba y
-  alerta en el primer pago).
+- **Verificados contra el servicio real el 2026-10-08:** el SDMX-CSV de la API
+  del BCE y el JSON del leaderboard no oficial de Hyperliquid (47.107 filas, sin
+  ninguna fila ilegible). **Siguen sin verificar:** el formato de
+  `eurofxref-hist.csv` (`--ecb-csv`; `www.ecb.europa.eu` estaba bloqueado) y el
+  signo del funding real (el bot lo comprueba y alerta en el primer pago).
 - **La comisión real de cada operación live** no viene en la respuesta de la
   orden: queda vacía en `trades.csv` y se toma del log de cuenta
   (`fees.csv`).

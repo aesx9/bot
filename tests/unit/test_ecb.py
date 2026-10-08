@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal as D
+from pathlib import Path
 
 import httpx
 import pytest
@@ -19,6 +20,17 @@ SDMX = (
 # Formato eurofxref-hist.csv (más reciente primero, BOM y "N/A")
 HIST = ("﻿Date,USD,JPY,\n2026-10-05,1.1600,170.1,\n2026-10-03,N/A,N/A,\n"
         "2026-10-02,1.1650,169.9,\n2026-10-01,1.1712,169.5,\n")
+
+
+def test_real_sdmx_response_from_ecb_api() -> None:
+    """Respuesta real de la API (2026-10-08): 32 columnas y campos con comas entre comillas."""
+    text = (Path(__file__).parent.parent / "fixtures" / "ecb_sdmx_real.txt").read_text("utf-8")
+    t = ecb.parse_rates(text, "real")
+    assert (t.dates[0], t.rates[0]) == (date(2026, 9, 25), D("1.1403"))
+    assert (t.dates[-1], t.rates[-1]) == (date(2026, 10, 8), D("1.1186"))
+    assert len(t.dates) == 10  # solo días hábiles: lo no publicado no aparece, sin "N/A"
+    # Sábado 3 de octubre: el último tipo publicado es el del viernes 2
+    assert t.rate_for(date(2026, 10, 3)) == (D("1.1225"), date(2026, 10, 2))
 
 
 @pytest.mark.parametrize("text", [SDMX, HIST])
@@ -44,6 +56,13 @@ def test_usd_to_eur_and_lookback_limit() -> None:
 def test_bad_files(bad: str) -> None:
     with pytest.raises(ecb.RateError):
         ecb.parse_rates(bad, "f")
+
+
+@pytest.mark.parametrize("empty", ["", "\n", "  \r\n"])
+def test_empty_body_means_no_data_not_bad_format(empty: str) -> None:
+    # La API real responde 200 y vacío para un periodo sin datos
+    with pytest.raises(ecb.RateError, match="no contiene tipos"):
+        ecb.parse_rates(empty, "f")
 
 
 @respx.mock

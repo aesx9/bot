@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal as D
 from pathlib import Path
@@ -130,6 +131,23 @@ def test_leaderboard_parsing_is_defensive() -> None:
     from copybot.sources.hyperliquid_rest import LeaderDataError
     with pytest.raises(LeaderDataError):
         parse_leaderboard({"otra": 1}, min_account_value=D(0), top=5)
+
+
+def test_real_leaderboard_sample() -> None:
+    """Muestra real del leaderboard (2026-10-08, 47.107 filas): importes como cadenas,
+    "windowPerformances" como lista de pares, "displayName" nulo o texto (aquí anonimizado)
+    y cuentas con accountValue "0.0"."""
+    sample = json.loads((Path(__file__).parent.parent / "fixtures" / "hl_leaderboard.json")
+                        .read_text("utf-8"))
+    rows = sample["leaderboardRows"]
+    assert len(rows) == 4 and all(len(r["ethAddress"]) == 42 for r in rows)
+    assert [w for w, _ in rows[0]["windowPerformances"]] == ["day", "week", "month", "allTime"]
+    # Solo ganan en el mes la fila 1 (con displayName) y la 3 (capital "0.0"):
+    # con mínimo de capital 10000 solo pasa la 1; con mínimo 0 pasan ambas
+    kept = parse_leaderboard(sample, min_account_value=D(10000), top=10)
+    assert kept == [rows[1]["ethAddress"]]
+    assert set(parse_leaderboard(sample, min_account_value=D(0), top=10)) == {
+        rows[1]["ethAddress"], rows[3]["ethAddress"]}
 
 
 def test_ranking_csv_and_wallet_file(tmp_path: Path) -> None:

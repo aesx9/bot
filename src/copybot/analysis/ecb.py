@@ -7,9 +7,11 @@ Fuentes admitidas:
 2. Fichero histórico descargado a mano (eurofxref-hist.csv, columnas Date y
    USD; "N/A" en días sin dato) o el mismo SDMX-CSV guardado en disco.
 
-AVISO: desde el entorno de desarrollo los dominios del BCE estaban bloqueados;
-el formato se ha implementado según la documentación pública del BCE y debe
-comprobarse en el VPS en la primera ejecución.
+Verificado el 2026-10-08 contra la API real: el SDMX-CSV (32 columnas, campos
+entrecomillados con comas, sin "N/A": los días sin publicar no aparecen) se
+parsea tal cual (tests/fixtures/ecb_sdmx_real.txt). Un periodo sin datos
+responde 200 con cuerpo vacío. El formato eurofxref-hist.csv NO se ha podido
+comprobar (www.ecb.europa.eu estaba bloqueado) y sigue según la documentación.
 
 El BCE no publica en fines de semana ni festivos TARGET: se usa el último tipo
 publicado anterior a la fecha (como mucho MAX_LOOKBACK_DAYS atrás) y el
@@ -59,6 +61,8 @@ class RateTable:
 
 
 def parse_rates(text: str, origin: str) -> RateTable:
+    if not text.strip():  # la API responde 200 y vacío si el periodo no tiene datos
+        raise RateError("el fichero no contiene tipos")
     reader = csv.DictReader(io.StringIO(text.lstrip("﻿")))
     fields = {(f or "").strip(): f for f in (reader.fieldnames or [])}
     if "TIME_PERIOD" in fields and "OBS_VALUE" in fields:

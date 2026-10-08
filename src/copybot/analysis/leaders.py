@@ -9,6 +9,7 @@ Origen de las candidatas:
 - --leaderboard: leaderboard NO OFICIAL de Hyperliquid
   (stats-data.hyperliquid.xyz). No está en la documentación de la API; su
   formato puede cambiar sin aviso y se marca como no oficial en la salida.
+  Formato verificado el 2026-10-08 (tests/fixtures/hl_leaderboard.json).
 
 Datos por candidata (endpoint /info oficial):
 - userAbstraction: unified account / portfolio margin -> descartada (el bot
