@@ -50,7 +50,7 @@
 | M7 | Media | `copybot-cli --status` falla con el servicio activo | (tests) | resuelto (`454058d`) |
 | M8 | Media | Sin vigilancia externa, watchdog ni manejo de SIGTERM | (lectura) | resuelto (`2c2087d`) |
 | M9 | Media | El kill switch puede tardar hasta 1 h | (lectura) | resuelto (`a248c21`) |
-| M10 | Media | Posiciones manuales en mercados del líder se adoptan | E | pendiente |
+| M10 | Media | Posiciones manuales en mercados del líder se adoptan | E | resuelto (`e8e0274`) |
 | M11 | Media | Sin coherencia de precios HL↔Kraken; `max_position_size` sin usar | (lectura) | pendiente |
 | M12 | Media | Los topes se aplican al objetivo, no a la exposición real | (lectura) | pendiente |
 | M13 | Media | Tras un HALT las posiciones quedan con stops laxos | (lectura) | pendiente |
@@ -218,11 +218,12 @@ hasta 3600 s. Corrección: vigilante de STOP cada segundo.
 - **Regresión:** tests/integration/test_emergency.py::test_stop_file_is_honoured_within_seconds_not_at_the_next_cycle
 
 ### M10 — Posiciones manuales adoptadas
-**Gravedad:** media · **Estado:** pendiente
+**Gravedad:** media · **Estado:** resuelto en `e8e0274`
 
 Una posición manual en un mercado que opera el líder se trata como propia.
 Corrección (decisión de diseño): fatal arrancar en live por primera vez con
 cualquier posición abierta en Kraken Futures.
+- **Regresión:** tests/integration/test_main.py::test_first_live_start_is_refused_with_any_open_position, ::test_restarts_with_the_bots_own_positions_are_not_blocked; test_check.py::test_open_positions_are_fatal_before_the_first_live_start, ::test_open_positions_after_the_bot_started_are_only_a_warning, ::test_no_open_positions_is_clean
 
 ### M11 — Coherencia de precios HL↔Kraken y `max_position_size`
 **Gravedad:** media · **Estado:** pendiente
