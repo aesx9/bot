@@ -66,6 +66,9 @@ simulate_orderbook_slippage = true
 [telegram]
 enabled = false
 
+[healthcheck]
+enabled = false                      # true + HEALTHCHECK_URL en .env: aviso externo (healthchecks.io)
+
 [paths]
 data_dir = "data"                    # base; se usa <data_dir>/paper o <data_dir>/live
                                      # (en el VPS: "/var/lib/copybot/data")

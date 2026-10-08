@@ -70,3 +70,11 @@ def load_telegram_credentials(env_path: Path) -> TelegramCredentials:
         bot_token=_secret(values, "TELEGRAM_BOT_TOKEN"),
         chat_id=_secret(values, "TELEGRAM_CHAT_ID"),
     )
+
+
+def load_healthcheck_url(env_path: Path) -> SecretStr:
+    values = _read_env(env_path)
+    url = _secret(values, "HEALTHCHECK_URL")
+    if not url.get_secret_value().startswith("https://"):
+        raise CredentialsError("HEALTHCHECK_URL debe empezar por https://")
+    return url

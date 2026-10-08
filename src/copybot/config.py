@@ -248,6 +248,11 @@ class TelegramConfig(_Strict):
     enabled: bool = False
 
 
+class HealthcheckConfig(_Strict):
+    # URL en .env (HEALTHCHECK_URL): aviso externo si el bot deja de dar señales
+    enabled: bool = False
+
+
 class PathsConfig(_Strict):
     data_dir: Path = Path("data")
 
@@ -270,6 +275,7 @@ class Config(_Strict):
     sanity: SanityConfig = SanityConfig()
     paper: PaperConfig = PaperConfig()
     telegram: TelegramConfig = TelegramConfig()
+    healthcheck: HealthcheckConfig = HealthcheckConfig()
     paths: PathsConfig = PathsConfig()
     logging: LoggingConfig = LoggingConfig()
 

@@ -179,3 +179,22 @@ def test_setup_verifies_effective_config_before_reloading_sshd() -> None:
     assert "99-copybot.conf <<" not in text
     assert text.index("verify_sshd.sh") < text.index("systemctl reload ssh")
     subprocess.run(["bash", "-n", str(DEPLOY / "verify_sshd.sh")], check=True)
+
+
+# --- M8: aviso externo y parada ordenada ---
+
+
+def test_service_notifies_from_outside_the_bot_when_it_fails() -> None:
+    s = service()
+    assert s["OnFailure"] == ["copybot-failure.service"]
+    unit = (DEPLOY / "copybot-failure.service").read_text()
+    assert "User=copybot" in unit and "Type=oneshot" in unit
+    assert "-m copybot.notify" in unit and "NoNewPrivileges=yes" in unit
+    assert "ReadOnlyPaths=/var/lib/copybot" in unit
+    assert "copybot-failure.service" in (DEPLOY / "setup_vps.sh").read_text()
+
+
+def test_service_stops_gracefully_on_sigterm() -> None:
+    s = service()
+    assert s["KillSignal"] == ["SIGTERM"]
+    assert int(s["TimeoutStopSec"][0]) > 25  # el bot espera hasta 25 s al ciclo en curso

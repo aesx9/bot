@@ -118,6 +118,7 @@ Lo esencial:
 | `[sanity]` | Controles del líder (salto ×20, capital ±50 %, N = 3). |
 | `[paper]` | Colateral simulado, haircut EUR y comisión taker (0,05 %, verificada). |
 | `[telegram]` | `enabled = true` para recibir alertas. |
+| `[healthcheck]` | `enabled = true` + `HEALTHCHECK_URL` en `.env`: aviso externo (healthchecks.io) si el bot deja de dar señales. |
 | `[logging]` | `external_rotation = true` en el VPS (rota logrotate). |
 
 Secretos, **solo** en `.env` y con permisos `600` (ver
@@ -128,6 +129,7 @@ KRAKEN_FUTURES_API_KEY=...       # solo live
 KRAKEN_FUTURES_API_SECRET=...
 TELEGRAM_BOT_TOKEN=...           # opcional
 TELEGRAM_CHAT_ID=...
+HEALTHCHECK_URL=...            # opcional: ping externo (healthchecks.io)
 ```
 
 Clave de Kraken Futures: permisos **General = Full Access** (lectura y
@@ -288,6 +290,20 @@ se niega a arrancar si no coincide):
 | `kraken_fills.csv` | **Solo live:** todos los fills reales de la cuenta, con origen. |
 | `fees.csv` | **Solo live:** comisiones reales del log de cuenta de Kraken. |
 
+**Vigilancia externa (recomendada en live):** el bot es su propio único canal de alerta, así
+que si el proceso muere o el VPS cae nadie avisa. Dos defensas independientes del bot:
+
+- `OnFailure=copybot-failure.service`: si el servicio queda en *failed* (salida 2/3 por una
+  protección, o reinicios agotados), esa unidad avisa por Telegram desde fuera del bot.
+- Healthcheck externo (opcional): crea un check en healthchecks.io (periodo 10 min, gracia
+  5 min), pon su URL en `HEALTHCHECK_URL` y `[healthcheck] enabled = true`. El heartbeat
+  hace ping si el último ciclo terminó bien y hace menos de 3 intervalos; ante un fallo,
+  una parada o un ciclo colgado marca `/fail`; si dejan de llegar pings (VPS caído), el
+  servicio externo te avisa.
+
+`systemctl stop copybot` y Ctrl+C son una **parada ordenada**: el bot termina el ciclo en
+curso, guarda el estado y sale con código 0 (posiciones y stops se quedan como están).
+
 **Alertas por Telegram:** pon `TELEGRAM_BOT_TOKEN` y `TELEGRAM_CHAT_ID` en
 `.env` y `enabled = true` en `[telegram]`. Avisan del arranque, de las
 paradas, del drawdown, de los errores, de los ciclos saltados y del signo
@@ -412,7 +428,7 @@ cambiar o desaparecer.
 sudo systemctl stop copybot
 cd /opt/copybot/app && sudo git pull
 sudo .venv/bin/python -m pip install --require-hashes --no-deps -r requirements.lock
-sudo install -m 644 deploy/copybot.service /etc/systemd/system/ && sudo systemctl daemon-reload
+sudo install -m 644 deploy/copybot.service deploy/copybot-failure.service /etc/systemd/system/ && sudo systemctl daemon-reload
 sudo copybot-cli --check        # solo live
 sudo copybot-cli --live         # solo live: el código cambió, hay que confirmar de nuevo
 sudo systemctl start copybot

@@ -1,0 +1,41 @@
+# /etc/systemd/system/copybot-failure.service
+# Lo activa copybot.service con OnFailure= cuando el servicio queda en estado "failed"
+# (salida por una protección con código 2 o 3, o reinicios agotados). Avisa desde fuera
+# del proceso del bot, que ya no puede hacerlo él mismo.
+
+[Unit]
+Description=Aviso: copybot ha fallado o se ha detenido
+
+[Service]
+Type=oneshot
+User=copybot
+Group=copybot
+Environment=PYTHONPATH=/opt/copybot/app/src
+ExecStart=/opt/copybot/app/.venv/bin/python -m copybot.notify \
+    --env /var/lib/copybot/.env \
+    --message "el servicio copybot ha fallado o se ha detenido: revisa sudo copybot-cli --status y journalctl -u copybot"
+StandardInput=null
+UMask=0077
+
+# --- Endurecimiento (solo lee .env y habla por HTTPS) ---
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadOnlyPaths=/var/lib/copybot
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+CapabilityBoundingSet=
+AmbientCapabilities=

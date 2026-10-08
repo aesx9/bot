@@ -126,3 +126,106 @@ async def test_orphan_is_closed_once_the_leader_is_flat_after_reset(tmp_path: Pa
     w.clock["now"] += timedelta(hours=1)  # fuera de la ventana de nocional/hora del breaker
     assert await w.cycle() is Outcome.OK
     assert await w.positions() == {}
+
+
+# --- M8: vigilancia externa y parada ordenada ---
+
+
+class FakeHealth:
+    def __init__(self) -> None:
+        self.oks = 0
+        self.fails: list[str] = []
+
+    async def ok(self) -> None:
+        self.oks += 1
+
+    async def fail(self, reason: str = "") -> None:
+        self.fails.append(reason)
+
+
+def with_health(w: World) -> FakeHealth:
+    hc = FakeHealth()
+    w.engine._health = hc  # type: ignore[assignment]
+    return hc
+
+
+async def test_healthy_bot_pings_ok(tmp_path: Path) -> None:
+    w = World(tmp_path, FakeLeader("100000", BTC="1"))
+    hc = with_health(w)
+    await w.cycle()
+    await w.engine._report_health()
+    assert (hc.oks, hc.fails) == (1, [])
+
+
+async def test_failing_halted_or_hung_bot_pings_fail(tmp_path: Path) -> None:
+    w = World(tmp_path, FakeLeader("100000", BTC="1"))
+    hc = with_health(w)
+    w.leader.fail = KeyError("x")
+    await w.cycle()
+    await w.engine._report_health()
+    assert hc.oks == 0 and "último ciclo: error" in hc.fails[-1]
+    # colgado: el último ciclo es de hace más de 3 intervalos
+    w.leader.fail = None
+    await w.cycle()
+    w.engine.last_cycle_at = w.clock["now"] - timedelta(hours=1)
+    await w.engine._report_health()
+    assert "sin completar un ciclo" in hc.fails[-1]
+    assert any("colgado" in t for _, t in w.alerts.sent)
+    # detenido
+    w.engine.last_cycle_at = w.clock["now"]
+    (w.tmp / "STOP").touch()
+    await w.cycle()
+    await w.engine._report_health()
+    assert hc.fails[-1].startswith("bot detenido")
+
+
+async def test_heartbeat_task_reports_to_the_healthcheck(tmp_path: Path) -> None:
+    w = World(tmp_path, FakeLeader("100000", BTC="1"))
+    hc = with_health(w)
+    fast(w)
+    w.cfg = w.cfg.model_copy(update={"timing": w.cfg.timing.model_copy(
+        update={"reconcile_interval_seconds": D("0.03"), "heartbeat_seconds": D("0.04")})})
+    w.engine.cfg = w.cfg
+    asyncio.get_running_loop().call_later(0.4, w.engine.request_stop)
+    await asyncio.wait_for(w.engine.run_forever(lambda **cb: IdleStream(**cb)), 5)
+    assert hc.oks >= 2 and hc.fails == []
+
+
+async def test_graceful_stop_waits_for_the_cycle_in_progress(tmp_path: Path) -> None:
+    """request_stop() (SIGTERM) deja terminar el ciclo en curso y no empieza otro."""
+    w = World(tmp_path, FakeLeader("100000", BTC="1"))
+    fast(w)
+    started, release = asyncio.Event(), asyncio.Event()
+    original = w.leader.leader_snapshot
+
+    async def slow(user: str):  # type: ignore[no-untyped-def]
+        started.set()
+        await release.wait()
+        return await original(user)
+
+    w.leader.leader_snapshot = slow  # type: ignore[method-assign]
+    run = asyncio.create_task(w.engine.run_forever(lambda **cb: IdleStream(**cb)))
+    await asyncio.wait_for(started.wait(), 5)
+    w.engine.request_stop()
+    await asyncio.sleep(0.1)
+    assert not run.done()  # el ciclo sigue ejecutándose: no se cancela
+    release.set()
+    report = await asyncio.wait_for(run, 5)
+    assert report is not None and report.outcome is Outcome.OK  # el ciclo terminó entero
+    assert w.engine.stop_requested and await w.positions()
+    assert w.store.load().managed_symbols  # y su estado quedó guardado
+
+
+async def test_sigterm_and_sigint_request_a_graceful_stop(tmp_path: Path) -> None:
+    import os
+    import signal
+
+    from copybot.main import stop_on_signals
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        w = World(tmp_path / sig.name, FakeLeader("100000", BTC="1"))
+        fast(w)
+        with stop_on_signals(w.engine):
+            asyncio.get_running_loop().call_later(0.1, os.kill, os.getpid(), sig)
+            await asyncio.wait_for(w.engine.run_forever(lambda **cb: IdleStream(**cb)), 5)
+        assert w.engine.stop_requested and not w.state.halted

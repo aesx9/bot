@@ -37,6 +37,7 @@ from copybot.exchange.base import Exchange, ExchangeError
 from copybot.exchange.kraken_public import KrakenDataError, Ticker
 from copybot.executor import CircuitBreakerTripped, ExecutionContext, Executor, OrderUncertain
 from copybot.filters import eligible_positions, initial_preexisting, update_preexisting
+from copybot.healthcheck import Healthcheck
 from copybot.models import LeaderSnapshot, MarketSpec
 from copybot.planner import PlannerError, plan
 from copybot.records import CsvRecorder
@@ -116,6 +117,7 @@ class Engine:
         emergency_rounds: int = 5,
         emergency_pause_seconds: float = 2,
         emergency_retry_seconds: float = 15,
+        healthcheck: Healthcheck | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self.cfg = cfg
@@ -141,6 +143,9 @@ class Engine:
         self._emergency_rounds = emergency_rounds
         self._emergency_pause = emergency_pause_seconds
         self._emergency_retry_seconds = emergency_retry_seconds
+        self._health = healthcheck
+        self._stop_requested = False
+        self._stopped: asyncio.Event | None = None  # el de run_forever, para request_stop()
         self._sleep = sleep
         self._mapper_markets: set[str] = set()
         # Último mercado y precio conocidos: permiten cerrar en emergencia aunque Kraken
@@ -185,6 +190,8 @@ class Engine:
     async def cycle(self, trigger: str = "rest", leader_time: datetime | None = None
                     ) -> CycleReport:
         async with self._lock:
+            if self._stop_requested:  # parada ordenada en curso: no empieza ningún ciclo nuevo
+                return CycleReport(Outcome.SKIPPED, "parada solicitada")
             try:
                 report = await self._cycle(trigger, leader_time)
             except Exception as exc:  # el bucle principal no puede morir por un fallo del ciclo
@@ -193,6 +200,49 @@ class Engine:
             self.last_cycle_at = self._now()
             log.info("ciclo (%s): %s %s", trigger, report.outcome.value, report.detail)
             return report
+
+    # --- parada ordenada (SIGTERM / SIGINT) ---
+
+    @property
+    def stop_requested(self) -> bool:
+        return self._stop_requested
+
+    def request_stop(self) -> None:
+        """Parada ordenada: termina el ciclo en curso (si lo hay), no empieza otro y sale.
+        Las posiciones y los stops de catástrofe se quedan como están."""
+        self._stop_requested = True
+        if self._stopped is not None:
+            self._stopped.set()
+
+    # --- vigilancia externa ---
+
+    async def _report_health(self) -> None:
+        """Ping al healthcheck externo si el bot funciona; /fail y alerta si no.
+
+        Sano = el último ciclo terminó bien (o saltado por cordura) y hace menos de
+        3 intervalos de reconciliación: así también se detecta un ciclo colgado."""
+        if self._health is None or self._stop_requested:
+            return
+        limit = 3 * float(self.cfg.timing.reconcile_interval_seconds) + 30
+        report, at = self.last_report, self.last_cycle_at
+        age = None if at is None else (self._now() - at).total_seconds()
+        if self.state.halted:
+            problem = f"bot detenido: {self.state.halt_reason}"
+        elif age is not None and age > limit:
+            problem = f"sin completar un ciclo desde hace {age:.0f} s (límite {limit:.0f} s)"
+            await self._best_effort(Level.CRITICAL, f"el bot lleva más de {limit:.0f} s sin "
+                                                    "completar un ciclo: ¿colgado?")
+        elif report is not None and report.outcome not in (Outcome.OK, Outcome.SKIPPED):
+            problem = f"último ciclo: {report.outcome.value} {report.detail}"
+        else:
+            problem = ""
+        try:
+            if problem:
+                await self._health.fail(problem)
+            else:
+                await self._health.ok()
+        except Exception:
+            log.exception("healthcheck")
 
     async def _last_resort(self, exc: Exception) -> CycleReport:
         """Un fallo dentro del propio tratamiento de errores (guardar el estado, alertar):
@@ -531,7 +581,9 @@ class Engine:
         """
         timing = self.cfg.timing
         latest_fill: list[datetime] = []
-        stopped = asyncio.Event()
+        stopped = self._stopped = asyncio.Event()
+        if self._stop_requested:
+            stopped.set()
 
         async def run_cycle(trigger: str, when: datetime | None = None) -> None:
             report = await self.cycle(trigger, when)
@@ -572,6 +624,7 @@ class Engine:
                 log.info("heartbeat: último ciclo %s, gestionados %s, errores seguidos %d",
                          r.outcome.value if r else "-", sorted(self.state.managed_symbols),
                          self.state.consecutive_errors)
+                await self._report_health()
 
         tasks = [asyncio.create_task(stream.run(), name="websocket"),
                  asyncio.create_task(reconcile_loop(), name="reconciliación"),
@@ -590,6 +643,11 @@ class Engine:
                 names = ", ".join(t.get_name() for t in dead)
                 raise LoopTaskDied(f"terminó la tarea {names} sin que el bot estuviera detenido")
         finally:
+            if self._stop_requested:
+                # Parada ordenada: se deja terminar el ciclo en curso antes de cancelar nada
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(self._lock.acquire(), 25)
+                    self._lock.release()
             await stream.stop()
             await debouncer.aclose()
             for t in (stop_wait, *tasks):

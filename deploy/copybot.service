@@ -16,6 +16,8 @@ Wants=network-online.target
 After=network-online.target
 StartLimitIntervalSec=1h
 StartLimitBurst=5
+# Si el servicio falla (salida 2/3 o reinicios agotados) lo avisa una unidad externa al bot
+OnFailure=copybot-failure.service
 
 [Service]
 Type=simple
@@ -30,7 +32,9 @@ StandardInput=null
 Restart=on-failure
 RestartSec=30
 RestartPreventExitStatus=2 3
-TimeoutStopSec=30
+TimeoutStopSec=40
+# SIGTERM = parada ordenada: el bot termina el ciclo en curso (hasta 25 s) y sale con 0
+KillSignal=SIGTERM
 UMask=0077
 
 # --- Endurecimiento ---

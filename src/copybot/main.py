@@ -15,10 +15,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import logging
+import signal
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -39,6 +41,7 @@ from copybot.config import Config, ConfigError, Mode, load_config
 from copybot.credentials import (
     CredentialsError,
     KrakenCredentials,
+    load_healthcheck_url,
     load_kraken_credentials,
     load_telegram_credentials,
 )
@@ -48,6 +51,7 @@ from copybot.exchange.kraken_auth import KrakenPrivateClient
 from copybot.exchange.kraken_public import KrakenMarketData
 from copybot.exchange.live import LiveExchange
 from copybot.exchange.paper import PaperAccount, PaperExchange
+from copybot.healthcheck import Healthcheck, HttpHealthcheck
 from copybot.logging_setup import setup_logging
 from copybot.records import CsvRecorder
 from copybot.risk import (
@@ -137,6 +141,22 @@ def live_summary(cfg: Config, startup_profile: bool) -> str:
     return "\n".join(lines)
 
 
+@contextlib.contextmanager
+def stop_on_signals(engine: Engine) -> Iterator[None]:
+    """SIGTERM (systemctl stop) y SIGINT (Ctrl+C) piden una parada ORDENADA: termina el ciclo
+    en curso, guarda el estado y sale con código 0. Sin esto, una señal mataba el proceso a
+    mitad de un ciclo."""
+    loop = asyncio.get_running_loop()
+    signals = (signal.SIGTERM, signal.SIGINT)
+    for sig in signals:
+        loop.add_signal_handler(sig, engine.request_stop)
+    try:
+        yield
+    finally:
+        for sig in signals:
+            loop.remove_signal_handler(sig)
+
+
 async def run_bot(
     cfg: Config, state: BotState, store: StateStore, once: bool, env_path: Path,
     live_creds: KrakenCredentials | None = None,
@@ -173,10 +193,13 @@ async def run_bot(
                 await alerter.alert(Level.CRITICAL, f"live NO arranca: {problem}")
                 return EXIT_USAGE
             exchange = LiveExchange(client, state)
+        health: Healthcheck | None = None
+        if cfg.healthcheck.enabled:
+            health = HttpHealthcheck(load_healthcheck_url(env_path), http)
         engine = Engine(
             cfg=cfg, state=state, store=store, leader=HyperliquidInfo(http), market=market,
             exchange=exchange, recorder=CsvRecorder(data_dir), alerter=alerter,
-            kill_dirs=[Path.cwd(), data_dir],
+            healthcheck=health, kill_dirs=[Path.cwd(), data_dir],
             startup_profile=live_creds is not None and state.live_startup_profile is True,
         )
         await alerter.alert(Level.INFO,
@@ -196,7 +219,8 @@ async def run_bot(
                 )
 
             try:
-                report = await engine.run_forever(stream_factory)
+                with stop_on_signals(engine):
+                    report = await engine.run_forever(stream_factory)
             except LoopTaskDied as exc:
                 # Salida con error: systemd reinicia el proceso (la confirmación live sigue
                 # vigente) en vez de dejarlo "vivo" sin operar.
@@ -204,12 +228,21 @@ async def run_bot(
                 try:
                     store.save(state)
                     await alerter.alert(Level.CRITICAL, f"bucle principal roto, se reinicia: {exc}")
+                    if health is not None:
+                        await health.fail(f"bucle principal roto: {exc}")
                 except Exception:
                     log.exception("no se pudo guardar el estado o avisar tras romperse el bucle")
                 return EXIT_ERROR
         store.save(state)
+        if engine.stop_requested:
+            log.warning("parada ordenada por señal: posiciones y stops quedan como están")
+            await alerter.alert(Level.WARNING, "bot parado por señal (SIGTERM/SIGINT); las "
+                                "posiciones y los stops de catástrofe siguen abiertos")
+            return EXIT_OK
         if report is not None and report.outcome is Outcome.HALTED:
             await alerter.alert(Level.CRITICAL, f"bot parado: {state.halt_reason}")
+            if health is not None:
+                await health.fail(f"bot parado: {state.halt_reason}")
     if report is None:
         return EXIT_ERROR
     return {Outcome.OK: EXIT_OK, Outcome.SKIPPED: EXIT_OK,

@@ -115,6 +115,7 @@ fi
 
 echo "== 8. systemd, logrotate y copybot-cli"
 install -m 644 "$APP/deploy/copybot.service" /etc/systemd/system/copybot.service
+install -m 644 "$APP/deploy/copybot-failure.service" /etc/systemd/system/copybot-failure.service
 install -m 644 "$APP/deploy/logrotate.conf" /etc/logrotate.d/copybot
 install -m 755 "$APP/deploy/copybot-cli" /usr/local/bin/copybot-cli
 systemctl daemon-reload
