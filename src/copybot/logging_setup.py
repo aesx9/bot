@@ -29,7 +29,10 @@ def setup_logging(
     level: int = logging.INFO,
     max_bytes: int = 5 * 1024 * 1024,
     backup_count: int = 10,
+    external_rotation: bool = False,
 ) -> None:
+    """external_rotation=True: sin rotación interna; WatchedFileHandler reabre el
+    fichero cuando logrotate lo mueve."""
     formatter = RedactingFormatter(LOG_FORMAT, DATE_FORMAT)
     root = logging.getLogger()
     for h in list(root.handlers):
@@ -42,10 +45,14 @@ def setup_logging(
 
     if log_dir is not None:
         log_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        fh = logging.handlers.RotatingFileHandler(
-            log_dir / "copybot.log", maxBytes=max_bytes, backupCount=backup_count,
-            encoding="utf-8",
-        )
+        fh: logging.Handler
+        if external_rotation:
+            fh = logging.handlers.WatchedFileHandler(log_dir / "copybot.log", encoding="utf-8")
+        else:
+            fh = logging.handlers.RotatingFileHandler(
+                log_dir / "copybot.log", maxBytes=max_bytes, backupCount=backup_count,
+                encoding="utf-8",
+            )
         fh.setFormatter(formatter)
         root.addHandler(fh)
 

@@ -219,7 +219,7 @@ def main(argv: Sequence[str] | None = None, prompt: Callable[[str], str] = input
         return EXIT_USAGE
 
     data_dir = cfg.paths.data_dir
-    setup_logging(data_dir / "logs")
+    setup_logging(data_dir / "logs", external_rotation=cfg.logging.external_rotation)
     store = StateStore(data_dir / "state.json")
     try:
         with InstanceLock(data_dir / "copybot.lock"):

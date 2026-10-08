@@ -1,0 +1,61 @@
+# /etc/systemd/system/copybot.service
+# Copy bot Hyperliquid -> Kraken Futures. Ver README.md, sección "Despliegue".
+#
+# Modo: lo decide config.toml. Para live, en /var/lib/copybot/service.env:
+#   COPYBOT_EXTRA_ARGS=--live
+# y SOLO después de un primer arranque live manual (copybot-cli --live) que deje
+# la confirmación escrita guardada. Sin ella, el servicio sale sin operar.
+#
+# Códigos de salida: 2 = uso/confirmación pendiente, 3 = bot detenido por una
+# protección. En ambos casos systemd NO lo reinicia: hay que revisarlo a mano.
+
+[Unit]
+Description=copybot Hyperliquid -> Kraken Futures
+Documentation=file:///opt/copybot/app/README.md
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=1h
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=copybot
+Group=copybot
+WorkingDirectory=/var/lib/copybot
+Environment=PYTHONPATH=/opt/copybot/app/src
+EnvironmentFile=-/var/lib/copybot/service.env
+ExecStart=/opt/copybot/app/.venv/bin/python -m copybot.main \
+    --config /var/lib/copybot/config.toml --env /var/lib/copybot/.env $COPYBOT_EXTRA_ARGS
+StandardInput=null
+Restart=on-failure
+RestartSec=30
+RestartPreventExitStatus=2 3
+TimeoutStopSec=30
+UMask=0077
+
+# --- Endurecimiento ---
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=/var/lib/copybot
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

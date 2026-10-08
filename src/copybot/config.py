@@ -252,6 +252,11 @@ class PathsConfig(_Strict):
     data_dir: Path = Path("data")
 
 
+class LoggingConfig(_Strict):
+    # true en el VPS: rota logrotate (el bot reabre el fichero al rotarse)
+    external_rotation: bool = False
+
+
 class Config(_Strict):
     mode: Mode = Mode.PAPER
     leader_address: str
@@ -266,6 +271,7 @@ class Config(_Strict):
     paper: PaperConfig = PaperConfig()
     telegram: TelegramConfig = TelegramConfig()
     paths: PathsConfig = PathsConfig()
+    logging: LoggingConfig = LoggingConfig()
 
     @field_validator("leader_address")
     @classmethod

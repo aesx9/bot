@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Ejecuta copybot a mano como el usuario del servicio, con sus mismas rutas.
+#   sudo copybot-cli --status
+#   sudo copybot-cli --check
+#   sudo copybot-cli --live          (primer arranque live: pide la confirmación)
+#   sudo copybot-cli --once
+#
+# Evita dos instancias: todo lo que no sea --status/--help exige que el
+# servicio esté parado. Además el bot toma un bloqueo (flock) sobre el
+# directorio de datos y se niega a arrancar si otro proceso lo tiene.
+set -euo pipefail
+
+APP=${COPYBOT_APP:-/opt/copybot/app}
+DATA=${COPYBOT_DATA:-/var/lib/copybot}
+SERVICE=copybot
+
+readonly_cmd=false
+for arg in "$@"; do
+    case "$arg" in
+        --status|--help|-h) readonly_cmd=true ;;
+    esac
+done
+
+if [[ "$readonly_cmd" == false ]] && systemctl is-active --quiet "$SERVICE"; then
+    echo "El servicio $SERVICE está en marcha. Páralo antes:" >&2
+    echo "    sudo systemctl stop $SERVICE" >&2
+    exit 2
+fi
+
+cd "$DATA"
+exec sudo -u copybot -H -- env PYTHONPATH="$APP/src" "$APP/.venv/bin/python" -m copybot.main \
+    --config "$DATA/config.toml" --env "$DATA/.env" "$@"
