@@ -476,6 +476,9 @@ class Engine:
             leader_positions={coin_for[s]: eligible[coin_for[s]] for s in coin_for},
             my_equity=equity, prices=prices, mapper=mapper, cfg=self._sizing_cfg,
         )
+        # El plan no toca los activos con precio incoherente, pero sus posiciones siguen
+        # siendo exposición real: la guarda del ejecutor las cuenta (all_current)
+        all_current = current
         current = {s: p for s, p in current.items() if s not in suspect}
         actions = plan(targets=sized.targets, current=current, managed=plan_managed,
                        prices=prices, markets=markets, cfg=cfg.planner)
@@ -489,7 +492,7 @@ class Engine:
                 prices=prices, max_asset_usd=per_asset_cap_usd(self._sizing_cfg, equity),
                 max_total_usd=total_cap_usd(self._sizing_cfg, equity))
             execution = await self._executor.execute(
-                actions, markets=markets, positions=current, ctx=ctx, exposure=exposure)
+                actions, markets=markets, positions=all_current, ctx=ctx, exposure=exposure)
         except Exception:
             # El ciclo se aborta (breaker, límite duro, orden incierta, fallo inesperado):
             # lo que ya se abrió en este ciclo no puede quedarse sin stop.

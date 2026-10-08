@@ -429,6 +429,27 @@ async def test_incoherent_price_leaves_an_existing_position_untouched(tmp_path: 
     assert (await w.positions())[BTC] == before  # ...y el bot no se mueve con ese precio
 
 
+async def test_exposure_guard_counts_positions_of_assets_with_incoherent_prices(
+        tmp_path: Path) -> None:
+    """N8: las posiciones de los activos con precio incoherente se quitaban de `current` antes
+    del ejecutor y la guarda de exposición total no las contaba: con BTC abierto y su precio
+    "sospechoso", una apertura en ETH superaba el tope total."""
+    w = World(tmp_path, FakeLeader("100000", BTC="1"),
+              sizing={"max_asset_pct_equity": 50, "max_total_leverage": D("0.6")})
+    assert await w.cycle() is Outcome.OK
+    btc = (await w.positions())[BTC]
+    assert btc > 0
+    w.leader.mids["BTC"] = D(1)  # BTC queda fuera del plan por precio incoherente...
+    w.leader.positions["ETH"] = D("100")  # ...y el líder abre ETH
+    assert await w.cycle() is Outcome.OK
+    equity = await w.exchange.equity_usd()
+    pos = await w.positions()
+    marks = {s: w.market.ticker_map[s].mark_price for s in pos}
+    total = sum(abs(size) * marks[s] for s, size in pos.items())
+    assert pos[BTC] == btc  # BTC intacto
+    assert total <= equity * D("0.6")  # la exposición real total respeta el tope
+
+
 async def test_size_factor_makes_a_scaled_asset_coherent(tmp_path: Path) -> None:
     """kPEPE: 1 unidad del líder = 1000 PEPE; sin size_factor el precio no cuadra."""
     mark = FakeMarket().ticker_map["PF_PEPEUSD"].mark_price
