@@ -61,7 +61,21 @@ class OrderUncertain(Exception):
 class ExecutionReport:
     results: list[OrderResult]
     deferred: int = 0  # acciones aplazadas por el límite de órdenes/min
+    skipped: int = 0  # aperturas/aumentos omitidos por superar la exposición real permitida
 
+
+@dataclass(frozen=True)
+class ExposureLimits:
+    """Topes sobre la exposición REAL (posiciones actuales + la orden), no sobre el objetivo.
+
+    El objetivo respeta los topes, pero con cierres parciales o que no se ejecutan, con
+    precios que se mueven bajo el umbral de reajuste, o con el perfil de arranque, las
+    posiciones reales pueden estar por encima de él: una orden que AUMENTA riesgo no se
+    envía si dejaría la cuenta por encima."""
+
+    prices: Mapping[str, Decimal]  # precio mark por símbolo, para valorar lo ya abierto
+    max_asset_usd: Decimal
+    max_total_usd: Decimal
 
 @dataclass(frozen=True)
 class ExecutionContext:
@@ -129,6 +143,7 @@ class Executor:
         positions: Mapping[str, Decimal],
         ctx: ExecutionContext,
         emergency: bool = False,
+        exposure: ExposureLimits | None = None,
     ) -> ExecutionReport:
         """emergency=True (cierre por drawdown o kill switch): solo admite órdenes
         reduceOnly y no las frena el circuit breaker, que existe para impedir
@@ -136,13 +151,14 @@ class Executor:
         pos = dict(positions)
         results: list[OrderResult] = []
         incomplete_flip: set[str] = set()
+        skipped = 0
 
         for i, a in enumerate(actions):
             if not emergency and self._breaker.minute_limit_reached():
                 deferred = len(actions) - i
                 log.warning("límite de órdenes por minuto alcanzado: %d acciones aplazadas",
                             deferred)
-                return ExecutionReport(results, deferred)
+                return ExecutionReport(results, deferred, skipped)
             if a.kind is ActionKind.FLIP_OPEN and a.symbol in incomplete_flip:
                 log.warning("%s: el cierre del cambio de dirección no se completó; "
                             "la apertura queda para el ciclo siguiente", a.symbol)
@@ -160,6 +176,13 @@ class Executor:
                 if not a.reduce_only:
                     raise limits.HardLimitViolation("cierre de emergencia con orden no reduceOnly")
             else:
+                if not a.reduce_only and exposure is not None:
+                    over = _exposure_excess(a, cur, delta, pos, exposure)
+                    if over:
+                        log.warning("%s: orden omitida, superaría la exposición permitida (%s)",
+                                    a.symbol, over)
+                        skipped += 1
+                        continue
                 reason = self._breaker.check_notional(a.notional_usd)
                 if reason:
                     raise CircuitBreakerTripped(reason)
@@ -212,7 +235,7 @@ class Executor:
                 log.warning("%s: orden rechazada (%s)", a.symbol, result.reason)
             if a.kind is ActionKind.FLIP_CLOSE and result.status is not OrderStatus.FILLED:
                 incomplete_flip.add(a.symbol)
-        return ExecutionReport(results)
+        return ExecutionReport(results, skipped=skipped)
 
     def _best_effort_save(self) -> None:
         try:
@@ -257,6 +280,20 @@ class Executor:
             fee_usd=result.fee_usd, delay_seconds=delay, cli_ord_id=result.cli_ord_id,
             status=result.status.value,
         ))
+
+
+def _exposure_excess(
+    a: Action, cur: Decimal, delta: Decimal, pos: Mapping[str, Decimal], exposure: ExposureLimits
+) -> str:
+    """Motivo si esta orden dejaría la exposición real por encima de los topes; '' si no."""
+    asset = abs(cur + delta) * a.ref_price
+    if asset > exposure.max_asset_usd:
+        return f"{asset:.2f} USD en el activo > {exposure.max_asset_usd:.2f}"
+    others = sum((abs(p) * exposure.prices.get(sym, a.ref_price)
+                  for sym, p in pos.items() if sym != a.symbol), ZERO)
+    if asset + others > exposure.max_total_usd:
+        return f"{asset + others:.2f} USD en total > {exposure.max_total_usd:.2f}"
+    return ""
 
 
 def _opt(v: Decimal | None) -> str | None:

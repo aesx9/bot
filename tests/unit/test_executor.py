@@ -234,3 +234,50 @@ async def test_rejection_is_reported_not_raised(tmp_path: Path) -> None:
     execu, ex, _, _, market, _ = setup(tmp_path)
     [r] = await run(execu, market, [act(ActionKind.CLOSE, Side.SELL, "1", True)], {SOL: D(1)})
     assert r.status is OrderStatus.REJECTED and trades(tmp_path) == []
+
+
+# --- M12: topes sobre la exposición real ---
+
+
+def limits_for(max_asset: str, max_total: str) -> Any:
+    from copybot.executor import ExposureLimits
+
+    return ExposureLimits(prices={SOL: D(100)}, max_asset_usd=D(max_asset),
+                          max_total_usd=D(max_total))
+
+
+async def test_increase_above_the_per_asset_cap_is_skipped_not_sent(tmp_path: Path) -> None:
+    """El perfil de arranque (100 USD/activo) también rige la exposición REAL."""
+    execu, ex, _, _, market, _ = setup(tmp_path)
+    report = await run_report(execu, market, [act(ActionKind.OPEN, Side.BUY, "1.5")],
+                              exposure=limits_for("100", "1000"))
+    assert (report.results, report.skipped, ex.sent) == ([], 1, [])
+    report = await run_report(execu, market, [act(ActionKind.OPEN, Side.BUY, "1")],
+                              exposure=limits_for("100", "1000"))
+    assert report.skipped == 0 and len(report.results) == 1  # justo en el tope: pasa
+
+
+async def test_open_is_skipped_if_real_positions_already_use_the_total(tmp_path: Path) -> None:
+    from copybot.executor import ExposureLimits
+
+    execu, ex, _, _, market, _ = setup(tmp_path)
+    market.set_mark("PF_ETHUSD", "100")
+    exposure = ExposureLimits(prices={SOL: D(100), "PF_ETHUSD": D(100)},
+                              max_asset_usd=D(500), max_total_usd=D(250))
+    open_eth = Action(ActionKind.OPEN, "PF_ETHUSD", Side.BUY, D(1), False, D(100))
+    # SOL ya ocupa 200 USD reales y la orden añadiría 100: 300 > 250
+    report = await run_report(execu, market, [open_eth], {SOL: D(2)}, exposure=exposure)
+    assert (report.skipped, report.results, ex.sent) == (1, [], [])
+    roomy = ExposureLimits(prices=exposure.prices, max_asset_usd=D(500), max_total_usd=D(300))
+    report = await run_report(execu, market, [open_eth], {SOL: D(2)}, exposure=roomy)
+    assert report.skipped == 0 and len(report.results) == 1  # 300 <= 300: pasa
+
+
+async def test_reductions_and_closes_are_never_blocked_by_the_guard(tmp_path: Path) -> None:
+    execu, ex, _, _, market, _ = setup(tmp_path)
+    await run(execu, market, [act(ActionKind.OPEN, Side.BUY, "3")])
+    report = await run_report(
+        execu, market,
+        [act(ActionKind.REDUCE, Side.SELL, "1", True), act(ActionKind.CLOSE, Side.SELL, "2", True)],
+        {SOL: D(3)}, exposure=limits_for("1", "1"))
+    assert report.skipped == 0 and await ex.positions() == {}

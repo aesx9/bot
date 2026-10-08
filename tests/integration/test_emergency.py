@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from copybot.alerts import Level
+from copybot.engine import Outcome
 from copybot.exchange.kraken_public import OrderBook
 from copybot.state import StateStore
 from tests.fakes import FakeLeader
@@ -118,3 +119,19 @@ async def test_stop_file_is_honoured_within_seconds_not_at_the_next_cycle(tmp_pa
     report = await asyncio.wait_for(w.engine.run_forever(lambda **cb: IdleStream(**cb)), 5)
     assert report is not None and report.outcome.value == "halted"
     assert await w.positions() == {} and w.state.kill_switch_closed
+
+
+async def test_open_is_skipped_while_a_previous_close_has_not_filled(tmp_path: Path) -> None:
+    """M12: el líder cambia de BTC a ETH, el cierre del BTC no se ejecuta (sin liquidez) y la
+    apertura de ETH dejaría la exposición real al doble del tope total."""
+    w = World(tmp_path, FakeLeader("100000", BTC="1"), sizing={"max_total_leverage": "0.3"})
+    await w.cycle()
+    assert set(await w.positions()) == {BTC}
+    empty_book(w)
+    del w.leader.positions["BTC"]
+    w.leader.positions["ETH"] = D(10)
+    assert await w.cycle() is Outcome.OK
+    assert set(await w.positions()) == {BTC}  # ni se cerró el BTC ni se abrió el ETH
+    w.market.books.pop(BTC)
+    assert await w.cycle() is Outcome.OK
+    assert set(await w.positions()) == {ETH}  # con liquidez, cierra y luego abre

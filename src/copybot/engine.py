@@ -35,7 +35,13 @@ from copybot.alerts import Alerter, Level
 from copybot.config import Config
 from copybot.exchange.base import Exchange, ExchangeError
 from copybot.exchange.kraken_public import KrakenDataError, Ticker
-from copybot.executor import CircuitBreakerTripped, ExecutionContext, Executor, OrderUncertain
+from copybot.executor import (
+    CircuitBreakerTripped,
+    ExecutionContext,
+    Executor,
+    ExposureLimits,
+    OrderUncertain,
+)
 from copybot.filters import eligible_positions, initial_preexisting, update_preexisting
 from copybot.healthcheck import Healthcheck
 from copybot.models import LeaderSnapshot, MarketSpec
@@ -50,7 +56,7 @@ from copybot.risk import (
     record_cycle_error,
     record_cycle_ok,
 )
-from copybot.sizing import SizingError, compute_targets
+from copybot.sizing import SizingError, compute_targets, per_asset_cap_usd, total_cap_usd
 from copybot.sources.debounce import Debouncer
 from copybot.sources.hyperliquid_rest import LeaderDataError
 from copybot.sources.hyperliquid_ws import LeaderFill
@@ -364,8 +370,11 @@ class Engine:
             leader_time=leader_time,
         )
         try:
+            exposure = ExposureLimits(
+                prices=prices, max_asset_usd=per_asset_cap_usd(self._sizing_cfg, equity),
+                max_total_usd=total_cap_usd(self._sizing_cfg, equity))
             execution = await self._executor.execute(
-                actions, markets=markets, positions=current, ctx=ctx)
+                actions, markets=markets, positions=current, ctx=ctx, exposure=exposure)
         except Exception:
             # El ciclo se aborta (breaker, límite duro, orden incierta, fallo inesperado):
             # lo que ya se abrió en este ciclo no puede quedarse sin stop.
@@ -394,6 +403,8 @@ class Engine:
         detail = f"{len(actions)} acciones"
         if execution.deferred:
             detail += f", {execution.deferred} aplazadas por el límite de órdenes/min"
+        if execution.skipped:
+            detail += f", {execution.skipped} omitidas por superar la exposición permitida"
         return CycleReport(Outcome.OK, detail, orders=len(results))
 
     async def _protect_after_abort(self, markets: dict[str, MarketSpec]) -> None:
