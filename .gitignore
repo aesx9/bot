@@ -5,6 +5,10 @@
 *.pem
 *.key
 
+# --- Configuración local (leader_address, rutas): no se versiona; sí config.example.toml ---
+config.toml
+service.env
+
 # --- Datos de ejecución ---
 data/
 state/

@@ -9,10 +9,10 @@ repos:
         language: system
         exclude: '(\.secrets\.baseline|requirements.*\.lock)$'
       - id: forbid-env-files
-        name: prohibir .env y datos de ejecución
-        entry: 'Prohibido commitear .env, state, logs o CSV'
+        name: prohibir .env, config.toml y datos de ejecución
+        entry: 'Prohibido commitear .env, config.toml, state, logs o CSV'
         language: fail
-        files: '(^|/)(\.env(\..*)?|state\.json|.*\.csv|.*\.log)$'
+        files: '(^|/)(\.env(\..*)?|state\.json|service\.env|config\.toml|.*\.csv|.*\.log)$'
         exclude: '(^|/)\.env\.example$'
       - id: ruff
         name: ruff
