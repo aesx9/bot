@@ -51,6 +51,8 @@
 - Live sigue sin probarse contra Kraken real: lo cubierto aquí es la lógica del bot contra
   una API privada simulada a partir de la documentación.
 
+- **Segunda auditoría** (al final): N1-N10, T1 y T2, todos resueltos; incluye la checklist de la prueba supervisada live.
+
 ## Resumen
 
 | ID | Gravedad | Hallazgo | PoC | Estado |
@@ -380,6 +382,19 @@ supervisada con dinero real.
   (el test no distingue el día del tipo del BCE): ver T1 y T2.
 - PoCs P1-P5 sobre la API privada simulada.
 
+## Estado
+
+- **Resueltos:** todos (N1-N10, T1, T2), cada uno con su commit y su test de regresión. Los de
+  N1-N8 y N10 fallan con el código anterior a su corrección; T1 y T2 son huecos de test (el código
+  era correcto) y sus tests matan las mutaciones que antes sobrevivían; N9 es documentación (y la
+  foto de posiciones, que ahora sí se toma al cambiar, la cubre el test de N2).
+- **Nuevo:** `copybot-cli --sync-ledger` (solo lecturas en Kraken) para traer al libro lo que pase
+  con el bot detenido, y `funding_moneda.csv` para el funding que no es USD.
+- **Siguen dependiendo de la prueba supervisada** (checklist al final): el estado con el que Kraken
+  rechaza un segundo stop (`ONE_STOP_PER_SYMBOL_STATUSES`, hoy una hipótesis) y la moneda real de
+  las entradas del log de cuenta (si `collateral` y `asset` discrepan, todo queda `DESCONOCIDA` y
+  el export se bloquea hasta revisarlo).
+
 ## Resumen
 
 | ID | Gravedad | Hallazgo | PoC | Estado |
@@ -500,16 +515,20 @@ saltar en la primera orden normal.
 - **Regresión:** tests/unit/test_executor.py::test_emergency_closes_do_not_count_in_the_notional_limit
 ## Checklist de la prueba supervisada live (capital mínimo)
 
-- [ ] Log de cuenta en una cuenta con colateral EUR: qué traen `asset` y `collateral`, moneda del
-      funding y de las comisiones, signo de `fee`, presencia de `liquidation_fee`.
+- [ ] Log de cuenta en una cuenta con colateral EUR: qué traen `asset` y `collateral` (¿discrepan?
+      entonces todo sale `DESCONOCIDA`: decidir cuál manda), moneda del funding y de las comisiones
+      (¿aparece `funding_moneda.csv`?), signo de `fee`, presencia de `liquidation_fee`.
 - [ ] Paginación: `since` inclusivo o no; con `sort=asc` y `count`, que se devuelven las entradas
       más ANTIGUAS (no las más recientes ordenadas); semántica de `lastFillTime` en `/fills`.
 - [ ] B9: `/openpositions` refleja el fill nada más recibir la respuesta; dos ciclos seguidos
       (debounce) no duplican la orden.
-- [ ] Stops de catástrofe: código de rechazo real con dos stops en el mismo símbolo; `openorders`
-      devuelve el `cliOrdId` `cs-`; el stop aparece en la web de Kraken.
+- [ ] Stops de catástrofe: estado real con el que se rechaza un segundo stop en el mismo símbolo
+      (ajustar `ONE_STOP_PER_SYMBOL_STATUSES`); cambiar el tamaño y comprobar que el stop se sustituye
+      sin quedar ningún instante sin él; `openorders` devuelve el `cliOrdId` `cs-`; el stop aparece
+      en la web de Kraken.
 - [ ] Kill switch real: cierre, cancelación de los stops `cs-` y fills del cierre en el libro.
-- [ ] `--sync-ledger` con el bot detenido trae los fills y el funding pendientes.
+- [ ] `--sync-ledger` con el bot detenido trae los fills y el funding pendientes (y no envía nada).
+- [ ] Copiar un cierre del líder con el nocional de la hora casi agotado: el cierre sale (N1).
 - [ ] Al terminar: export fiscal con `fiscal_conciliacion_<año>.csv` cuadrando; comisiones y funding
       contrastados con el historial de Kraken; signo del funding verificado.
 - [ ] Reinicio por systemd sin pedir confirmación; salida 3 al detenerse; aviso de `OnFailure`;
