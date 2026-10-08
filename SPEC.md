@@ -343,7 +343,17 @@ pública real:
 - Libro real (solo live): `kraken_fills.csv` guarda todos los fills reales
   de la cuenta, incluidos stops de catástrofe, liquidaciones y operaciones
   manuales, cada uno con su origen. Los fills anteriores al primer
-  arranque live no se importan. Es la base del export fiscal.
+  arranque live no se importan. Es la base del export fiscal. El libro se
+  escribe en dos fases: primero los CSV (idempotentes por `fill_id` y
+  `booking_uid`) y solo después avanzan el cursor y los ids vistos; `/fills` y
+  el log de cuenta se leen con paginación sin perder entradas del mismo
+  milisegundo. El motor guarda además una foto de las posiciones reales
+  (`positions.csv`) y el export concilia con ella el neto de los fills
+  (`fiscal_conciliacion_<año>.csv`), avisando si no cuadra.
+- Moneda y signo: cada entrada del log se interpreta en su moneda (colateral o
+  activo). El funding que no es USD no se escribe en `funding.csv` y se avisa;
+  las comisiones se guardan con su moneda real (EUR se convierte en el export,
+  otras se avisan) y se alerta de una comisión negativa o de signo invertido.
 - `export_fiscal`: el resultado se pasa de USD a EUR con el tipo de
   referencia diario del BCE (EUR/USD) en la fecha de cada liquidación,
   indicando la fuente en el fichero. Funding pagado y cobrado en columnas

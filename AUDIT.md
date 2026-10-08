@@ -15,6 +15,8 @@
   repo. Cada corrección añade un test de regresión que invierte su PoC.
 - 73 mutaciones sobre una copia: los tests detectaron 63 y sobrevivieron 10
   (ver M14).
+- Tras cerrar M3 y M4: 33 mutaciones adicionales sobre el libro (paginación, cursor, idempotencia,
+  conciliación, moneda y signo); los tests las detectan todas.
 - Escaneo del historial de git de todas las ramas: sin secretos.
 - Limitación: nada se ha probado contra Kraken ni Hyperliquid reales.
 
@@ -34,11 +36,16 @@
 
 ## Estado actual
 
-- **Resueltos:** A1-A5, M1, M2, M5-M14 y B1, B2, B3, B4, B6, B7, B8 (cada uno con su commit y
-  su test de regresión).
-- **Siguen abiertos:** M3 (libro fiscal sin deduplicación ni conciliación) y M4 (moneda y
-  signo de funding y comisiones sin verificar), que no estaban en el lote acordado; B5 y B9,
-  documentados como pendientes (B9 se verificará en la prueba supervisada con dinero real).
+- **Resueltos:** A1-A5, M1-M14 y B1, B2, B3, B4, B6, B7, B8 (cada uno con su commit y su test
+  de regresión). M3 y M4, que quedaron fuera del primer lote, se cerraron después a petición
+  del usuario; las acciones de GitHub Actions de B1 se fijaron por SHA.
+- **Siguen abiertos:** solo B5 y B9, documentados como pendientes (B9 se verificará en la
+  prueba supervisada con dinero real).
+- **A verificar en esa prueba supervisada (B9):** los campos reales del `account-log` de una
+  cuenta multi-colateral (`collateral` frente a `asset`, signo de `fee`, `realized_pnl`), la
+  paginación real de `/fills` (`lastFillTime`) y del log (`since` inclusivo o no), y que
+  `fiscal_conciliacion_<año>.csv` cuadre con la cuenta. Las comprobaciones de M3 y M4 están
+  escritas para el peor caso en cada duda, y avisan en vez de suponer.
 - Las 10 mutaciones que sobrevivían en el commit base (M14) mueren ahora; el kill switch live
   tiene test de integración (M2).
 - Live sigue sin probarse contra Kraken real: lo cubierto aquí es la lógica del bot contra
@@ -67,7 +74,7 @@
 | M12 | Media | Los topes se aplican al objetivo, no a la exposición real | (lectura) | resuelto (`66e8f39`) |
 | M13 | Media | Tras un HALT las posiciones quedan con stops laxos | (lectura) | resuelto (`6efcace`) |
 | M14 | Media | Lagunas de tests (mutaciones supervivientes) | mutación | resuelto (`0c8d487`) |
-| B1 | Baja | `config.toml` no ignorado; pre-commit voluntario; sin CI | (lectura) | resuelto (`dbc9c96`) |
+| B1 | Baja | `config.toml` no ignorado; pre-commit voluntario; sin CI | (lectura) | resuelto (`dbc9c96`, `b3dbfc8`) |
 | B2 | Baja | `Authorization: Bearer x` deja el token | (lectura) | resuelto (`8094e83`) |
 | B3 | Baja | Año fiscal y día BCE en UTC en vez de Madrid | (lectura) | resuelto (`2f3d6c2`) |
 | B4 | Baja | Export no atómico; funding asignable a dos posiciones | (lectura) | resuelto (`03b9a29`) |
@@ -182,6 +189,13 @@ consulta cada 300 s y devuelve ≤100; el cursor `ts+1` con `count=50` puede sal
 eventos con el mismo milisegundo. Corrección: dedupe al escribir y al exportar,
 escritura antes de avanzar cursores, sondeo en cada ciclo con paginación y
 conciliación del neto de fills con las posiciones.
+- **Aplicado:** libro en dos fases (`collect_funding` prepara, el motor escribe los CSV y
+  `commit_ledger` avanza cursor e ids vistos); `/fills` paginado con `lastFillTime` (más
+  antiguo + 1 ms) y account-log paginado desde (último ms − 1), ambos con dedupe por
+  `fill_id`/`booking_uid`; CSV idempotentes por id; foto de posiciones (`positions.csv`) y
+  `fiscal_conciliacion_<año>.csv` con aviso si no cuadra. Si una página entera comparte
+  milisegundo se avisa en vez de repetirla. Las entradas ilegibles siguen saltándose con
+  alerta.
 - **Regresión:** tests/integration/test_live_ledger.py (12: paginación de /fills y del account-log, mismo milisegundo, escritura antes del cursor, idempotencia de los CSV) y tests/unit/test_fiscal.py::test_duplicated_fill_rows_are_counted_once, ::test_duplicated_fee_and_funding_rows_are_counted_once, ::test_reconciliation_*
 
 ### M4 — Moneda y signo sin verificar
@@ -191,6 +205,12 @@ El funding se calcula como `new_balance − old_balance` y se etiqueta USD sin
 comprobar `asset`; el signo de `fee` no se verifica; `report.py` ignora
 comisiones en EUR. Corrección: exigir `asset=usd` (o convertir) y alertar; verificar
 el signo de `fee` como el del funding; no ignorar EUR.
+- **Aplicado:** la moneda de cada entrada es su colateral (o activo). El funding que no es
+  USD no se escribe en `funding.csv` y avisa con importe, moneda y `booking_uid`; las
+  comisiones se guardan con su moneda real (`DESCONOCIDA` si falta) y avisan si no son USD ni
+  EUR (el export convierte EUR). Alerta para una comisión negativa o que hace subir el saldo.
+  `fiscal.py` ya no da por USD una comisión sin moneda; `report.py` suma USD, muestra EUR
+  aparte sin convertir y avisa del resto.
 - **Regresión:** tests/integration/test_live_ledger.py::test_funding_in_another_currency_is_not_recorded_as_usd, ::test_fee_currency_is_recorded_and_never_assumed_usd, ::test_negative_or_inverted_fee_sign_alerts_and_the_value_is_kept; tests/unit/test_fiscal.py::test_fees_without_currency_or_in_other_currencies_are_not_counted_as_usd; tests/unit/test_report.py::test_live_report_does_not_ignore_eur_fees_nor_assume_usd
 
 ### M5 — Puerta `--check`
@@ -279,10 +299,12 @@ httpx; deduplicación de alertas. No hay test de integración del kill switch li
 ## Bajas
 
 ### B1 — `.gitignore`, pre-commit y CI
-**Gravedad:** baja · **Estado:** resuelto en `dbc9c96`
+**Gravedad:** baja · **Estado:** resuelto en `dbc9c96` (acciones fijadas por SHA en `b3dbfc8`)
 
-`config.toml` no está ignorado, el pre-commit es voluntario y no hay CI.
-- **Regresión:** tests/unit/test_repo_hygiene.py (4 tests)
+`config.toml` no está ignorado, el pre-commit es voluntario y no hay CI. Las acciones de
+GitHub del CI (`actions/checkout`, `actions/setup-python`) se referenciaban por etiqueta
+movible; ahora van fijadas por SHA de commit con la versión en un comentario.
+- **Regresión:** tests/unit/test_repo_hygiene.py (4 tests) y ::test_ci_actions_are_pinned_by_commit_sha_not_by_movable_tag
 
 ### B2 — Redacción de `Authorization: Bearer`
 **Gravedad:** baja · **Estado:** resuelto en `8094e83`

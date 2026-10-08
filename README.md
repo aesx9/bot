@@ -291,7 +291,8 @@ se niega a arrancar si no coincide):
 | `funding.csv` | Funding por evento, con pagado y cobrado separados. |
 | `equity.csv` | Capital propio y del líder, cada 15 minutos. |
 | `kraken_fills.csv` | **Solo live:** todos los fills reales de la cuenta, con origen. |
-| `fees.csv` | **Solo live:** comisiones reales del log de cuenta de Kraken. |
+| `fees.csv` | **Solo live:** comisiones reales del log de cuenta de Kraken, con su moneda. |
+| `positions.csv` | **Solo live:** foto de las posiciones reales de Kraken (al cambiar y cada hora); el export fiscal las concilia con los fills. |
 
 **Vigilancia externa (recomendada en live):** el bot es su propio único canal de alerta, así
 que si el proceso muere o el VPS cae nadie avisa. Dos defensas independientes del bot:
@@ -393,7 +394,7 @@ sudo -u copybot env PYTHONPATH=src .venv/bin/python scripts/export_fiscal.py \
     --year 2026 --data-dir /var/lib/copybot/data/live --out /var/lib/copybot/data/live
 ```
 
-Genera tres ficheros:
+Genera cuatro ficheros:
 
 - `fiscal_posiciones_<año>.csv`: una fila por posición cerrada en el año,
   con resultado bruto, comisiones, funding pagado y cobrado (columnas
@@ -402,6 +403,11 @@ Genera tres ficheros:
 - `fiscal_funding_<año>.csv`: cada pago o cobro de funding, también de
   posiciones aún abiertas.
 - `fiscal_resumen_<año>.csv`: subtotales por origen y total.
+- `fiscal_conciliacion_<año>.csv`: por cada foto de `positions.csv`, el neto de los
+  fills frente a la posición real de Kraken. Si no cuadra (`NO CUADRA`) falta o sobra
+  algún fill y el resultado de ese mercado no es fiable: el script lo avisa. Los fills,
+  comisiones y funding repetidos en los CSV se cuentan una sola vez (por `fill_id` y
+  `booking_uid`).
 
 Conversión a EUR con el **tipo de referencia diario del BCE**, cada flujo en
 su fecha **en hora de Madrid** (también el año fiscal; los CSV siguen en UTC): el resultado, al tipo del día de cierre; cada comisión, al del día
