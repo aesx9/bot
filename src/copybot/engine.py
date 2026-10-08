@@ -316,8 +316,10 @@ class Engine:
 
         after = await self._ex.positions()
         state.managed_symbols = {s for s in managed if after.get(s) or s in sized.targets}
-        await self._after_trading(snap.equity_usd)
+        # Los stops van PRIMERO: un fallo posterior (funding, libro, capital) no puede dejar
+        # una posición recién abierta sin protección
         await self._sync_protective_stops(after, markets)
+        await self._after_trading(snap.equity_usd)
 
         paced = await self._track_pacing(execution.deferred)
         if paced is not None:
@@ -430,6 +432,18 @@ class Engine:
         return markets, prices
 
     async def _close_all_managed(self) -> tuple[str, bool]:
+        """Cierra lo gestionado y deja los stops de catástrofe coherentes con lo que quede:
+        sin posiciones no sobrevive ningún stop `cs-` (podría cerrar una posición manual
+        futura en ese mercado)."""
+        message, complete = await self._close_rounds()
+        try:
+            markets, _ = await self._public_or_known()
+            await self._sync_protective_stops(await self._ex.positions(), markets)
+        except Exception:
+            log.exception("cierre de emergencia: no se pudieron actualizar los stops")
+        return message, complete
+
+    async def _close_rounds(self) -> tuple[str, bool]:
         """Cierre de emergencia: rondas de órdenes reduceOnly sin límite del circuit breaker.
 
         Cada símbolo se trata por separado: un mercado sin especificación, sin precio o

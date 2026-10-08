@@ -54,6 +54,9 @@ class FakeKraken:
         self.calls: list[tuple[str, str, dict[str, str]]] = []
         self.bad_signatures = 0
         self._fill_seq = 0
+        # El exchange no admite dos stops reduceOnly sobre la misma posición (hipótesis)
+        self.one_stop_per_symbol = False
+        self.fail_paths: set[str] = set()  # rutas que responden 503 (inyección de fallos)
 
     # --- utilidades ---
 
@@ -85,6 +88,8 @@ class FakeKraken:
         params = dict(parse_qsl(data))
         path = request.url.path
         self.calls.append((request.method, path, params))
+        if path in self.fail_paths:
+            return httpx.Response(503, json={"result": "error", "error": "unavailable"})
         if path == "/derivatives/api/v3/accounts":
             return _ok(accounts={"flex": self.flex})
         if path == "/derivatives/api/v3/openpositions":
@@ -112,6 +117,9 @@ class FakeKraken:
 
     def _send(self, p: dict[str, str]) -> httpx.Response:
         if p["orderType"] == "stp":
+            if self.one_stop_per_symbol and any(
+                    o["symbol"] == p["symbol"] for o in self.open_orders):
+                return _ok(sendStatus={"status": "wouldNotReducePosition", "orderEvents": []})
             self.open_orders.append({
                 "order_id": f"o{len(self.open_orders)}", "cliOrdId": p["cliOrdId"],
                 "status": "untouched", "side": p["side"], "orderType": "stop",

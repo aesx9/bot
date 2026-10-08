@@ -432,3 +432,109 @@ async def test_stop_prices_and_sizes_are_positional(env: Env) -> None:
     [stop] = env.kraken.sends("stp")
     assert POSITIONAL.match(stop["size"]) and POSITIONAL.match(stop["stopPrice"])
     assert stop["size"] == "5000"
+
+
+# --- M2: stops de catástrofe ---
+
+
+async def test_failed_replacement_keeps_the_old_stop(env: Env) -> None:
+    """PoC G: antes se cancelaba el stop y luego se colocaba el nuevo; si el alta fallaba,
+    la posición se quedaba sin ninguno."""
+    market = FakeMarket()
+    env.kraken.positions = [{"symbol": SOL, "side": "long", "size": "2", "price": "100"}]
+    await env.live.sync_catastrophe_stops({SOL: D(2)}, market.specs, D(20))
+    [old] = env.kraken.open_orders
+    env.kraken.positions[0]["size"] = "3"
+    original = env.kraken._send
+
+    def flaky(p: dict[str, str]) -> httpx.Response:
+        if p["orderType"] == "stp":
+            return httpx.Response(503, json={"result": "error", "error": "unavailable"})
+        return original(p)
+
+    env.kraken._send = flaky  # type: ignore[method-assign]
+    with pytest.raises(ExchangeError):
+        await env.live.sync_catastrophe_stops({SOL: D(3)}, market.specs, D(20))
+    assert env.kraken.open_orders == [old] and env.kraken.cancels() == []
+
+
+async def test_new_stop_is_placed_before_the_old_one_is_cancelled(env: Env) -> None:
+    market = FakeMarket()
+    env.kraken.positions = [{"symbol": SOL, "side": "long", "size": "2", "price": "100"}]
+    await env.live.sync_catastrophe_stops({SOL: D(2)}, market.specs, D(20))
+    env.kraken.positions[0]["size"] = "3"
+    mark = len(env.kraken.calls)
+    await env.live.sync_catastrophe_stops({SOL: D(3)}, market.specs, D(20))
+    order = [p.rsplit("/", 1)[1] for _, p, _ in env.kraken.calls[mark:]
+             if p.endswith(("/sendorder", "/cancelorder"))]
+    assert order == ["sendorder", "cancelorder"]
+    assert [o["unfilledSize"] for o in env.kraken.open_orders] == ["3"]
+
+
+async def test_replacement_falls_back_when_the_exchange_allows_one_stop_per_symbol(
+    env: Env,
+) -> None:
+    market = FakeMarket()
+    env.kraken.one_stop_per_symbol = True
+    env.kraken.positions = [{"symbol": SOL, "side": "long", "size": "2", "price": "100"}]
+    await env.live.sync_catastrophe_stops({SOL: D(2)}, market.specs, D(20))
+    env.kraken.positions[0]["size"] = "3"
+    warnings = await env.live.sync_catastrophe_stops({SOL: D(3)}, market.specs, D(20))
+    assert warnings == []
+    assert [o["unfilledSize"] for o in env.kraken.open_orders] == ["3"]
+
+
+async def test_error_after_trading_does_not_skip_the_stop_sync(env: Env, tmp_path: Path) -> None:
+    """PoC G2: un 503 en /fills (libro fiscal) tras abrir dejaba la posición sin stop."""
+    from copybot.alerts import LogAlerter
+    from copybot.config import Config
+    from copybot.engine import Engine
+    from tests.conftest import LEADER
+    from tests.fakes import FakeLeader
+
+    # El log de cuenta (funding/comisiones) falla DESPUÉS de operar; /fills sí responde
+    # porque la línea base del libro se lee antes de enviar nada (A4)
+    env.kraken.fail_paths.add("/api/history/v3/account-log")
+    cfg = Config.model_validate({"leader_address": LEADER, "mode": "live",
+                                 "filters": {"ignore_preexisting": False}})
+    market = FakeMarket()
+    market.set_mark(SOL, "100")
+    env.kraken.fill_price = D(100)
+    leader = FakeLeader("100000", SOL="5000")
+    leader.clock = lambda: NOW
+    engine = Engine(cfg=cfg, state=env.state, store=StateStore(tmp_path / "s.json"),
+                    leader=leader, market=market, exchange=env.live,
+                    recorder=CsvRecorder(tmp_path), alerter=LogAlerter(), kill_dirs=[tmp_path],
+                    startup_profile=True, now=lambda: NOW,
+                    breaker_clock=lambda: NOW.timestamp())
+    assert (await engine.cycle()).outcome.value == "error"  # _after_trading falló...
+    assert await env.live.positions()
+    assert len(env.kraken.open_orders) == 1  # ...pero el stop ya estaba colocado
+
+
+async def test_kill_switch_cancels_the_catastrophe_stops(env: Env, tmp_path: Path) -> None:
+    """PoC L: tras el cierre de emergencia el stop `cs-` seguía en el exchange."""
+    from copybot.alerts import LogAlerter
+    from copybot.config import Config
+    from copybot.engine import Engine
+    from tests.conftest import LEADER
+    from tests.fakes import FakeLeader
+
+    cfg = Config.model_validate({"leader_address": LEADER, "mode": "live",
+                                 "filters": {"ignore_preexisting": False}})
+    market = FakeMarket()
+    market.set_mark(SOL, "100")
+    env.kraken.fill_price = D(100)
+    leader = FakeLeader("100000", SOL="5000")
+    leader.clock = lambda: NOW
+    engine = Engine(cfg=cfg, state=env.state, store=StateStore(tmp_path / "s.json"),
+                    leader=leader, market=market, exchange=env.live,
+                    recorder=CsvRecorder(tmp_path), alerter=LogAlerter(), kill_dirs=[tmp_path],
+                    startup_profile=True, now=lambda: NOW,
+                    breaker_clock=lambda: NOW.timestamp(), emergency_pause_seconds=0)
+    await engine.cycle()
+    assert len(env.kraken.open_orders) == 1
+    (tmp_path / "STOP").touch()
+    assert (await engine.cycle()).outcome.value == "halted"
+    assert await env.live.positions() == {}
+    assert env.kraken.open_orders == []

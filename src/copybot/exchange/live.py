@@ -402,15 +402,18 @@ class LiveExchange:
                     and abs(_dec(o.get("stopPrice"), "stop") - stop) <= spec.tick_size]
             if keep and len(current) == 1:
                 continue
+            # Primero se coloca el nuevo y solo entonces se retira el antiguo: la posición
+            # no queda ni un instante sin protección. Si el exchange no admite dos stops
+            # reduceOnly a la vez, se retira el antiguo y se reintenta; si el alta lanza
+            # una excepción, el antiguo sigue en su sitio.
+            status = await self._place_stop(symbol, side, size, stop)
+            if status == "placed":
+                for o in current:
+                    await self._cancel(o)
+                continue
             for o in current:
                 await self._cancel(o)
-            result = await self._c.request("POST", f"{API}/sendorder", [
-                ("orderType", "stp"), ("symbol", symbol), ("side", side.value),
-                ("size", plain(abs(size))), ("stopPrice", plain(stop)),
-                ("triggerSignal", "mark"),
-                ("reduceOnly", "true"), ("cliOrdId", STOP_PREFIX + uuid.uuid4().hex),
-            ])
-            status = (result.get("sendStatus") or {}).get("status")
+            status = await self._place_stop(symbol, side, size, stop)
             if status != "placed":
                 warnings.append(f"{symbol}: no se pudo colocar el stop de catástrofe ({status})")
 
@@ -421,6 +424,14 @@ class LiveExchange:
             warnings.append("si saltaran todos los stops a la vez, la pérdida se acercaría "
                             "a la liquidación: reduce el apalancamiento")
         return warnings
+
+    async def _place_stop(self, symbol: str, side: Side, size: Decimal, stop: Decimal) -> Any:
+        result = await self._c.request("POST", f"{API}/sendorder", [
+            ("orderType", "stp"), ("symbol", symbol), ("side", side.value),
+            ("size", plain(abs(size))), ("stopPrice", plain(stop)), ("triggerSignal", "mark"),
+            ("reduceOnly", "true"), ("cliOrdId", STOP_PREFIX + uuid.uuid4().hex),
+        ])
+        return (result.get("sendStatus") or {}).get("status")
 
     async def _cancel(self, order: Mapping[str, Any]) -> None:
         await self._c.request("POST", f"{API}/cancelorder",
