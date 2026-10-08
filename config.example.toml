@@ -55,8 +55,9 @@ halt_after_consecutive_failures = 3  # tope absoluto: 5
 max_clock_skew_seconds = 5
 
 [paper]
-initial_equity_usd = 540
-taker_fee_pct = 0.05                 # pendiente de verificar (fase 4)
+initial_collateral_eur = 500         # colateral simulado en EUR
+eur_haircut_pct = 0                  # ayuda de Kraken (EEE): 0 % para EUR
+taker_fee_pct = 0.05                 # no verificable por API: confírmalo en tu cuenta
 simulate_funding = true
 simulate_orderbook_slippage = true
 

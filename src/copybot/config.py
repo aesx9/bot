@@ -227,8 +227,12 @@ class SanityConfig(_Strict):
 
 
 class PaperConfig(_Strict):
-    initial_equity_usd: Dec = Field(default=Decimal("540"), gt=0)
-    # Comisión taker en %. Valor a verificar contra la tabla oficial (fase 4).
+    # Colateral simulado en EUR (el real será EUR); se valora con EUR/USD de Kraken
+    initial_collateral_eur: Dec = Field(default=Decimal("500"), gt=0)
+    # Haircut del colateral EUR. La ayuda de Kraken (EEE) indica 0 % para EUR.
+    eur_haircut_pct: Dec = Field(default=Decimal("0"), ge=0, lt=100)
+    # Comisión taker en %. No verificable por API (endpoint obsoleto desde
+    # 2026-06-22): 0,05 % es el nivel inicial según terceros. Confírmalo en tu cuenta.
     taker_fee_pct: Dec = Field(default=Decimal("0.05"), ge=0, le=1)
     simulate_funding: bool = True
     simulate_orderbook_slippage: bool = True
