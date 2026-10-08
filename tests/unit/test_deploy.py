@@ -115,3 +115,67 @@ def test_external_log_rotation_reopens_file(tmp_path: Path) -> None:
         for h in saved[0]:
             root.addHandler(h)
         root.setLevel(saved[1])
+
+
+# --- M6: SSH solo con clave, verificado sobre la configuración efectiva ---
+
+
+def _fake_sshd(bin_dir: Path, conf_dir: Path) -> None:
+    """sshd -T simulado con la regla real: ficheros en orden alfabético, gana el primer valor."""
+    (bin_dir / "sshd").write_text(f"""#!/usr/bin/env python3
+import pathlib
+seen = {{}}
+for f in sorted(pathlib.Path({str(conf_dir)!r}).glob("*.conf")):
+    for line in f.read_text().splitlines():
+        if line.strip() and not line.startswith("#"):
+            key, _, value = line.partition(" ")
+            seen.setdefault(key.lower(), value.strip())
+for key, value in seen.items():
+    print(key, value.lower() if key != "allowusers" else value)
+""")
+    (bin_dir / "sshd").chmod(0o755)
+
+
+def _copybot_dropin() -> tuple[str, str]:
+    text = (DEPLOY / "setup_vps.sh").read_text()
+    m = re.search(r"cat > /etc/ssh/sshd_config\.d/(\S+\.conf) <<CONF\n(.*?)\nCONF", text, re.S)
+    assert m
+    return m.group(1), m.group(2).replace("$ADMIN_USER", "admin")
+
+
+def _verify(tmp_path: Path, files: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    conf, bin_dir = tmp_path / "sshd_config.d", tmp_path / "bin"
+    conf.mkdir()
+    bin_dir.mkdir()
+    for name, content in files.items():
+        (conf / name).write_text(content + "\n")
+    _fake_sshd(bin_dir, conf)
+    env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
+    return subprocess.run(["bash", str(DEPLOY / "verify_sshd.sh"), "admin"], env=env,
+                          capture_output=True, text=True, check=False)
+
+
+CLOUD_INIT = "PasswordAuthentication yes"  # lo que traen muchas imágenes de VPS
+
+
+def test_dropin_sorts_before_cloud_init_so_it_wins(tmp_path: Path) -> None:
+    name, content = _copybot_dropin()
+    assert name < "50-cloud-init.conf"
+    ok = _verify(tmp_path, {name: content, "50-cloud-init.conf": CLOUD_INIT})
+    assert ok.returncode == 0, ok.stderr
+
+
+def test_verification_catches_a_dropin_that_loses_to_cloud_init(tmp_path: Path) -> None:
+    """Con el nombre antiguo 99-copybot.conf, PasswordAuthentication seguía en yes."""
+    _, content = _copybot_dropin()
+    bad = _verify(tmp_path, {"99-copybot.conf": content, "50-cloud-init.conf": CLOUD_INIT})
+    assert bad.returncode == 1
+    assert "passwordauthentication no" in bad.stderr
+    assert "efectivo: passwordauthentication yes" in bad.stderr
+
+
+def test_setup_verifies_effective_config_before_reloading_sshd() -> None:
+    text = (DEPLOY / "setup_vps.sh").read_text()
+    assert "99-copybot.conf <<" not in text
+    assert text.index("verify_sshd.sh") < text.index("systemctl reload ssh")
+    subprocess.run(["bash", "-n", str(DEPLOY / "verify_sshd.sh")], check=True)

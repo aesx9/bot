@@ -48,7 +48,10 @@ CONF
 systemctl enable --now unattended-upgrades
 
 echo "== 2. SSH solo con clave"
-cat > /etc/ssh/sshd_config.d/99-copybot.conf <<CONF
+# 00-: sshd usa el primer valor de cada directiva y lee los ficheros en orden alfabético;
+# un 50-cloud-init.conf (típico en VPS) con PasswordAuthentication yes anularía un 99-.
+rm -f /etc/ssh/sshd_config.d/99-copybot.conf   # nombre antiguo, que perdía ese orden
+cat > /etc/ssh/sshd_config.d/00-copybot.conf <<CONF
 PasswordAuthentication no
 KbdInteractiveAuthentication no
 PubkeyAuthentication yes
@@ -59,6 +62,8 @@ MaxAuthTries 3
 AllowUsers $ADMIN_USER
 CONF
 sshd -t || die "configuración de SSH no válida; no se recarga"
+# Sintaxis válida no significa que se aplique: se verifica la configuración efectiva
+bash "$APP/deploy/verify_sshd.sh" "$ADMIN_USER" || die "sshd no aplica la configuración segura; no se recarga"
 systemctl reload ssh
 
 echo "== 3. Cortafuegos"
