@@ -389,7 +389,7 @@ supervisada con dinero real.
 | N3 | Media | Cualquier rechazo del stop nuevo retira el antiguo (regresión de M2) | P2 | resuelto (`ca9285c`) |
 | N4 | Media | El funding que no es USD solo queda en una alerta; el export no lo ve (M4) | P1 | resuelto (`b430609`) |
 | N5 | Baja/Media | Tras saltar un stop de catástrofe el bot reabre en el ciclo siguiente | P5 | resuelto (`65eb429`) |
-| T1 | Baja | Hueco de test de A1: las dos capas de captura se tapan entre sí | mutación | pendiente |
+| T1 | Baja | Hueco de test de A1: las dos capas de captura se tapan entre sí | mutación | resuelto (`6d30626`) |
 | T2 | Baja | Hueco de test de B3: ningún test distingue el día del tipo del BCE | mutación | pendiente |
 | N6 | Baja | `fills_seen` conserva los ids más antiguos al recortar | (lectura) | pendiente |
 | N7 | Baja | `liquidation_fee` no se deduce como comisión | (lectura) | pendiente |
@@ -450,12 +450,13 @@ pierde esa distancia hasta que corta el drawdown. Corrección: un fill de origen
 
 - **Regresión:** tests/integration/test_halted_ledger.py::test_a_catastrophe_stop_or_liquidation_halts_instead_of_reopening (stop y liquidación) y ::test_bot_and_manual_fills_do_not_halt
 ### T1 — Las dos capas de captura de A1
-**Gravedad:** baja · **Estado:** pendiente
+**Gravedad:** baja · **Estado:** resuelto en `6d30626`
 
 Quitar el `try` de `Engine.cycle()` o reducir el `except` de `_cycle` a `CYCLE_ERRORS`
 sobrevive a la suite. Con lo segundo, una excepción imprevista acaba en `_last_resort`, que no
 guarda el estado ni avisa.
 
+- **Regresión:** tests/integration/test_resilience.py::test_unexpected_exception_in_trading_is_alerted_and_persisted y ::test_exception_outside_the_trading_block_does_not_escape_cycle (cada uno mata una de las dos mutaciones)
 ### T2 — Día del tipo del BCE (B3)
 **Gravedad:** baja · **Estado:** pendiente
 
