@@ -54,7 +54,7 @@
 | M11 | Media | Sin coherencia de precios HL↔Kraken; `max_position_size` sin usar | (lectura) | resuelto (`f138907`) |
 | M12 | Media | Los topes se aplican al objetivo, no a la exposición real | (lectura) | resuelto (`66e8f39`) |
 | M13 | Media | Tras un HALT las posiciones quedan con stops laxos | (lectura) | resuelto (`6efcace`) |
-| M14 | Media | Lagunas de tests (mutaciones supervivientes) | mutación | pendiente |
+| M14 | Media | Lagunas de tests (mutaciones supervivientes) | mutación | resuelto (`0c8d487`) |
 | B1 | Baja | `config.toml` no ignorado; pre-commit voluntario; sin CI | (lectura) | pendiente |
 | B2 | Baja | `Authorization: Bearer x` deja el token | (lectura) | pendiente |
 | B3 | Baja | Año fiscal y día BCE en UTC en vez de Madrid | (lectura) | pendiente |
@@ -251,13 +251,14 @@ crítica que lista las posiciones abiertas.
 - **Regresión:** tests/unit/test_state_risk.py::test_catastrophe_stop_distance_follows_drawdown_over_leverage y ::test_stop_loss_at_the_stop_equals_the_drawdown_limit; test_live_exchange.py::test_catastrophe_stop_distance_comes_from_drawdown_and_leverage; test_resilience.py::test_halt_without_auto_close_alerts_what_stays_open y ::test_halt_with_everything_closed_has_no_open_positions_note; test_main.py::test_live_summary_shows_the_computed_catastrophe_stop
 
 ### M14 — Lagunas de tests
-**Gravedad:** media · **Estado:** pendiente
+**Gravedad:** media · **Estado:** resuelto en `0c8d487`
 
 Mutaciones supervivientes: `slippage_cap_pct` → límite de la orden ejecutada;
 orden rechazada como ciclo con error; mercado `suspended` en el motor; año
 fiscal por cierre; tipo del día del pago en el fichero de posiciones; `redact()`
 en Telegram; ejecución parcial marcada FILLED; `OSError` al enviar; loggers de
 httpx; deduplicación de alertas. No hay test de integración del kill switch live.
+- **Regresión:** tests/unit/test_alerts.py; test_executor.py::test_limit_price_uses_the_configured_cap_and_never_more_than_the_hard_one, ::test_oserror_after_the_order_reached_the_exchange_is_reconciled; test_engine.py::test_rejected_orders_count_as_a_cycle_error_and_five_halt, ::test_suspended_market_blocks_the_cycle_without_orders; test_live_exchange.py::test_partial_ioc_execution_is_reported_as_partial; test_fiscal.py::test_a_position_belongs_to_the_year_it_was_closed_not_opened, ::test_each_funding_in_a_position_uses_the_rate_of_its_payment_day
 
 ---
 
