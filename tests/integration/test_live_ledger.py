@@ -313,3 +313,21 @@ async def test_negative_or_inverted_fee_sign_alerts_and_the_value_is_kept(
     assert any("'neg'" in a for a in alerts) and any("'inv'" in a for a in alerts)
     _, fees = env.live.drain_ledger()
     assert {f["booking_uid"]: f["fee"] for f in fees}["neg"] == D("-0.1")  # tal cual llega
+
+
+async def test_fills_seen_keeps_the_most_recent_ids_when_trimmed(
+        env: Env, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+    """N6: las páginas de /fills van de las más recientes a las más antiguas; al recortar
+    fills_seen se quedaban los ids ANTIGUOS y cada sondeo volvía a paginar los recientes."""
+    monkeypatch.setattr(live, "FILLS_PAGE", 3)
+    monkeypatch.setattr(live, "SEEN_MEMORY", 4)
+    env.kraken.fills_page = 3
+    await started(env)
+    env.kraken.fills = [fill_at(1000 * i, f"f{i}") for i in range(1, 8)]
+    await env.live.collect_funding(NOW + timedelta(minutes=6))
+    env.live.commit_ledger()
+    assert env.state.fills_seen == ["f4", "f5", "f6", "f7"]  # los 4 más recientes, en orden
+    calls = len(env.kraken.calls)
+    await env.live.collect_funding(NOW + timedelta(minutes=7))
+    assert env.live.drain_ledger() == ([], [])
+    assert sum(path.endswith("/fills") for _, path, _ in env.kraken.calls[calls:]) == 1

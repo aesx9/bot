@@ -505,6 +505,7 @@ class LiveExchange:
         param: str | None = None
         for _ in range(FILLS_MAX_PAGES):
             page = await self._fetch_fills(param)
+            page_ids: list[str] = []
             page_has_seen = False
             times: list[datetime] = []
             for f in sorted(page, key=lambda f: str(f.get("fillTime"))):
@@ -520,14 +521,18 @@ class LiveExchange:
                     continue  # ya salió en la página anterior (solapamiento del borde)
                 if baseline:  # fills anteriores al primer arranque live: no son del bot
                     staged.fill_id_set.add(fid)
-                    staged.fill_ids.append(fid)
+                    page_ids.append(fid)
                     continue
                 row = self._fill_row(f, fid)
                 if row is None:
                     continue  # sin marcarlo como visto: se reintenta en el siguiente sondeo
                 staged.fill_id_set.add(fid)
-                staged.fill_ids.append(fid)
+                page_ids.append(fid)
                 staged.fills.append(row)
+            # Cada página es más ANTIGUA que la anterior: sus ids se anteponen, de modo que
+            # fill_ids queda en orden cronológico y el recorte de fills_seen (SEEN_MEMORY)
+            # conserva los más recientes, que son los que vuelve a dar /fills
+            staged.fill_ids[:0] = page_ids
             if baseline or len(page) < FILLS_PAGE or page_has_seen or not times:
                 return
             nxt = _iso_ms(min(times) + timedelta(milliseconds=1))
