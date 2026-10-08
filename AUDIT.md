@@ -385,7 +385,7 @@ supervisada con dinero real.
 | ID | Gravedad | Hallazgo | PoC | Estado |
 |---|---|---|---|---|
 | N1 | Media | El tope de nocional por hora detiene el bot al copiar un cierre | P4 | resuelto (`c8b33be`) |
-| N2 | Media | Con el bot detenido el libro fiscal no recoge nada (cierres de emergencia, stops) | P3 | pendiente |
+| N2 | Media | Con el bot detenido el libro fiscal no recoge nada (cierres de emergencia, stops) | P3 | resuelto (`d40b652`) |
 | N3 | Media | Cualquier rechazo del stop nuevo retira el antiguo (regresión de M2) | P2 | resuelto (`ca9285c`) |
 | N4 | Media | El funding que no es USD solo queda en una alerta; el export no lo ve (M4) | P1 | pendiente |
 | N5 | Baja/Media | Tras saltar un stop de catástrofe el bot reabre en el ciclo siguiente | P5 | pendiente |
@@ -394,7 +394,7 @@ supervisada con dinero real.
 | N6 | Baja | `fills_seen` conserva los ids más antiguos al recortar | (lectura) | pendiente |
 | N7 | Baja | `liquidation_fee` no se deduce como comisión | (lectura) | pendiente |
 | N8 | Baja | La guarda de exposición no cuenta los activos con precio incoherente | (lectura) | pendiente |
-| N9 | Baja | El README dice que `positions.csv` se escribe "al cambiar" | (lectura) | pendiente |
+| N9 | Baja | El README dice que `positions.csv` se escribe "al cambiar" | (lectura) | resuelto (`d40b652`) |
 | N10 | Baja | Los cierres de emergencia cuentan en el tope de nocional | (lectura) | resuelto (`c8b33be`) |
 
 ## Hallazgos
@@ -409,7 +409,7 @@ Corrección: las reduceOnly no cuentan ni se frenan en el tope de nocional.
 
 - **Regresión:** tests/unit/test_executor.py::test_reduce_only_orders_never_trip_nor_count_in_the_notional_limit
 ### N2 — Libro fiscal parado mientras el bot está detenido
-**Gravedad:** media · **Estado:** pendiente
+**Gravedad:** media · **Estado:** resuelto en `d40b652`
 
 `engine.py`: el libro (funding, fills, comisiones, cursor y foto de posiciones) solo se
 actualiza al final de un ciclo de trading completo. Los fills de un cierre por STOP o drawdown,
@@ -418,6 +418,7 @@ parada (nunca, si el bot se abandona). El export cree que la posición sigue abi
 conciliación dice "cuadra" porque tampoco hay foto posterior. Corrección: actualizar el libro
 también en ciclos detenidos y tras cada cierre de emergencia, y `--sync-ledger` de solo lectura.
 
+- **Regresión:** tests/integration/test_halted_ledger.py (cierre de emergencia en el libro y en el export, ciclos detenidos, --sync-ledger solo lectura y su negativa sin línea base)
 ### N3 — Un rechazo cualquiera del stop nuevo retira el antiguo
 **Gravedad:** media · **Estado:** resuelto en `ca9285c`
 
@@ -478,10 +479,11 @@ Las entradas de liquidación del log traen la comisión en `liquidation_fee`, qu
 antes de pasarlo al ejecutor, y la guarda de exposición total no las cuenta.
 
 ### N9 — README de `positions.csv`
-**Gravedad:** baja · **Estado:** pendiente
+**Gravedad:** baja · **Estado:** resuelto en `d40b652`
 
 La foto se escribe con el registro de capital (cada 15 min) y, sin cambios, como mucho cada hora.
 
+- **Regresión:** README (tabla de ficheros); la foto se toma en cada actualización del libro: tests/integration/test_halted_ledger.py::test_emergency_close_fills_reach_the_ledger_and_the_export
 ### N10 — Cierres de emergencia y tope de nocional
 **Gravedad:** baja · **Estado:** resuelto en `c8b33be`
 
