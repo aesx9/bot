@@ -390,7 +390,7 @@ supervisada con dinero real.
 | N4 | Media | El funding que no es USD solo queda en una alerta; el export no lo ve (M4) | P1 | resuelto (`b430609`) |
 | N5 | Baja/Media | Tras saltar un stop de catástrofe el bot reabre en el ciclo siguiente | P5 | resuelto (`65eb429`) |
 | T1 | Baja | Hueco de test de A1: las dos capas de captura se tapan entre sí | mutación | resuelto (`6d30626`) |
-| T2 | Baja | Hueco de test de B3: ningún test distingue el día del tipo del BCE | mutación | pendiente |
+| T2 | Baja | Hueco de test de B3: ningún test distingue el día del tipo del BCE | mutación | resuelto (`98e9a0c`) |
 | N6 | Baja | `fills_seen` conserva los ids más antiguos al recortar | (lectura) | pendiente |
 | N7 | Baja | `liquidation_fee` no se deduce como comisión | (lectura) | pendiente |
 | N8 | Baja | La guarda de exposición no cuenta los activos con precio incoherente | (lectura) | pendiente |
@@ -458,11 +458,12 @@ guarda el estado ni avisa.
 
 - **Regresión:** tests/integration/test_resilience.py::test_unexpected_exception_in_trading_is_alerted_and_persisted y ::test_exception_outside_the_trading_block_does_not_escape_cycle (cada uno mata una de las dos mutaciones)
 ### T2 — Día del tipo del BCE (B3)
-**Gravedad:** baja · **Estado:** pendiente
+**Gravedad:** baja · **Estado:** resuelto en `98e9a0c`
 
 El test de B3 usa el 1 de enero, sin tipo publicado: UTC y Madrid caen ambos en el 31/12 y la
 mutación `local_date` → fecha UTC sobrevive.
 
+- **Regresión:** tests/unit/test_fiscal.py::test_each_flow_takes_the_ecb_rate_of_its_madrid_day_when_utc_says_otherwise (mata la mutación local_date -> UTC)
 ### N6 — Recorte de `fills_seen`
 **Gravedad:** baja · **Estado:** pendiente
 
