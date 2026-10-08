@@ -48,7 +48,7 @@
 | M5 | Media | Puerta `--check` mal invalidada y sin revalidar permisos | M | resuelto (`8c87bfd`) |
 | M6 | Media | "SSH solo con clave" puede no aplicarse | (OpenSSH) | resuelto (`70deb3f`) |
 | M7 | Media | `copybot-cli --status` falla con el servicio activo | (tests) | resuelto (`454058d`) |
-| M8 | Media | Sin vigilancia externa, watchdog ni manejo de SIGTERM | (lectura) | pendiente |
+| M8 | Media | Sin vigilancia externa, watchdog ni manejo de SIGTERM | (lectura) | resuelto (`2c2087d`) |
 | M9 | Media | El kill switch puede tardar hasta 1 h | (lectura) | pendiente |
 | M10 | Media | Posiciones manuales en mercados del líder se adoptan | E | pendiente |
 | M11 | Media | Sin coherencia de precios HL↔Kraken; `max_position_size` sin usar | (lectura) | pendiente |
@@ -203,11 +203,12 @@ exclusivo y falla. Corrección: `--status` de solo lectura.
 - **Regresión:** tests/integration/test_main.py::test_status_works_while_the_service_runs_and_says_so, ::test_status_creates_no_files, ::test_second_instance_is_refused
 
 ### M8 — Vigilancia externa, watchdog y SIGTERM
-**Gravedad:** media · **Estado:** pendiente
+**Gravedad:** media · **Estado:** resuelto en `2c2087d`
 
 El bot es su propio único canal de alerta, `StartLimitBurst=5` lo abandona y no
 hay manejo de SIGTERM. Corrección (decisión de diseño): healthcheck externo
 opcional con la URL en `.env`, `OnFailure=` y parada ordenada por señal.
+- **Regresión:** tests/unit/test_healthcheck.py; test_resilience.py::test_healthy_bot_pings_ok, ::test_failing_halted_or_hung_bot_pings_fail, ::test_heartbeat_task_reports_to_the_healthcheck, ::test_graceful_stop_waits_for_the_cycle_in_progress, ::test_sigterm_and_sigint_request_a_graceful_stop; test_deploy.py::test_service_notifies_from_outside_the_bot_when_it_fails, ::test_service_stops_gracefully_on_sigterm
 
 ### M9 — Latencia del kill switch
 **Gravedad:** media · **Estado:** pendiente
