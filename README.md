@@ -224,6 +224,9 @@ otro con `rank_leaders`.
 
 1. **Deposita en Kraken Futures solo lo que aceptes perder** (el plan parte
    de unos 500 EUR como colateral).
+   La cuenta debe estar **sin posiciones abiertas**: `--check` y el primer `--live` se
+   niegan si hay alguna (el bot la tomaría como suya y podría cerrarla). Lo ideal es una
+   cuenta de Kraken solo para el bot.
 2. **Crea la clave** (General Full Access, sin transferencias, IP del VPS) y
    escríbela en `/var/lib/copybot/.env`:
    ```bash

@@ -188,3 +188,30 @@ async def test_key_is_revalidated_before_every_live_start(h: Harness) -> None:
     h.kraken.fail_paths.add("/api/auth/v1/api-keys/v3/check")
     with pytest.raises(ExchangeError):
         await key_problem(client)  # no se pudo consultar: no se da por bueno
+
+
+# --- M10: posiciones abiertas ---
+
+
+async def test_open_positions_are_fatal_before_the_first_live_start(h: Harness) -> None:
+    h.kraken.positions = [{"symbol": "PF_XBTUSD", "side": "long", "size": "0.01", "price": "1"}]
+    report = await h.run()
+    assert not report.passed and "posiciones abiertas" in failed(report)
+    assert h.state.live_check is None
+
+
+async def test_open_positions_after_the_bot_started_are_only_a_warning(h: Harness) -> None:
+    h.state.live_funding_cursor_ms = 1  # el bot ya operó en live
+    h.state.managed_symbols = {"PF_SOLUSD"}
+    h.kraken.positions = [
+        {"symbol": "PF_SOLUSD", "side": "long", "size": "1", "price": "1"},
+        {"symbol": "PF_XBTUSD", "side": "long", "size": "0.01", "price": "1"}]
+    report = await h.run()
+    assert report.passed
+    assert any(i.name == "posiciones no gestionadas" and not i.fatal for i in report.items)
+
+
+async def test_no_open_positions_is_clean(h: Harness) -> None:
+    report = await h.run()
+    assert report.passed
+    assert any(i.name == "posiciones abiertas" and i.ok for i in report.items)

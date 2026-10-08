@@ -22,6 +22,7 @@ import signal
 import sys
 from collections.abc import Callable, Iterator, Sequence
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,7 @@ from copybot.alerts import Alerter, Level, LogAlerter, TelegramAlerter
 from copybot.checks import (
     CheckReport,
     confirmation_record,
+    first_live_start,
     key_problem,
     live_check_valid,
     live_confirmation_valid,
@@ -258,6 +260,12 @@ async def run_check_command(cfg: Config, state: BotState, creds: KrakenCredentia
         )
 
 
+async def live_open_positions(creds: KrakenCredentials) -> dict[str, Decimal]:
+    """Posiciones abiertas hoy en la cuenta de Kraken Futures (solo lectura)."""
+    async with httpx.AsyncClient(timeout=15) as http:
+        return await LiveExchange(KrakenPrivateClient(http, creds), BotState()).positions()
+
+
 def main(argv: Sequence[str] | None = None, prompt: Callable[[str], str] = input) -> int:
     args = build_parser().parse_args(argv)
     try:
@@ -338,6 +346,19 @@ def main(argv: Sequence[str] | None = None, prompt: Callable[[str], str] = input
                     print(f"No se puede arrancar en live: {problem}. Ejecuta --check.",
                           file=sys.stderr)
                     return EXIT_USAGE
+                if first_live_start(state):
+                    try:
+                        open_positions = asyncio.run(live_open_positions(creds))
+                    except ExchangeError as exc:
+                        print(f"No se pudo comprobar las posiciones de la cuenta: {exc}",
+                              file=sys.stderr)
+                        return EXIT_ERROR
+                    if open_positions:
+                        print("No se puede arrancar en live por primera vez con posiciones "
+                              f"abiertas en la cuenta ({', '.join(sorted(open_positions))}): el "
+                              "bot las tomaría como suyas y podría cerrarlas. Ciérralas antes "
+                              "(o usa una cuenta de Kraken solo para el bot).", file=sys.stderr)
+                        return EXIT_USAGE
                 first_profile = state.live_startup_profile is not False
                 print(live_summary(cfg, startup_profile=first_profile))
                 needs = live_confirmation_valid(state, cfg, creds)

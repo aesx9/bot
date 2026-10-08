@@ -160,8 +160,12 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
                                 "key_fingerprint": key_fingerprint(creds)}
         return report
 
+    async def fake_positions(creds):  # type: ignore[no-untyped-def]
+        return rec.get("open_positions", {})
+
     monkeypatch.setattr(main_mod, "run_bot", fake_run_bot)
     monkeypatch.setattr(main_mod, "run_check_command", fake_check)
+    monkeypatch.setattr(main_mod, "live_open_positions", fake_positions)
     return rec
 
 
@@ -349,3 +353,37 @@ async def test_live_start_is_refused_if_the_key_gained_transfer_permission(
     assert kraken.sends() == []
     assert state.live_confirmation is None and state.live_check is None
     assert st.load().live_confirmation is None
+
+
+# --- M10: primer arranque live con posiciones ajenas ---
+
+
+def test_first_live_start_is_refused_with_any_open_position(
+    tmp_path: Path, calls: dict[str, Any], capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_env(tmp_path)
+    assert main(live_args(tmp_path, "--check")) == EXIT_OK
+    calls["open_positions"] = {"PF_XBTUSD": Decimal("0.01")}
+    assert main(live_args(tmp_path, "--live"), prompt=answer(LIVE_PHRASE)) == EXIT_USAGE
+    assert "run_bot" not in calls
+    assert "PF_XBTUSD" in capsys.readouterr().err
+    assert store(tmp_path, "live").load().live_startup_profile is None  # nada se activó
+    calls["open_positions"] = {}
+    assert main(live_args(tmp_path, "--live"), prompt=answer(LIVE_PHRASE)) == EXIT_OK
+
+
+def test_restarts_with_the_bots_own_positions_are_not_blocked(
+    tmp_path: Path, calls: dict[str, Any]
+) -> None:
+    """El servicio reinicia tras una caída con posiciones suyas abiertas: eso no es 'ajeno'."""
+    _confirmed_live(tmp_path, calls)
+    st = store(tmp_path, "live").load()
+    st.managed_symbols = {"PF_XBTUSD"}
+    store(tmp_path, "live").save(st)
+    calls["open_positions"] = {"PF_XBTUSD": Decimal("0.01")}
+
+    def no_stdin(_: str) -> str:
+        raise EOFError
+
+    assert main(live_args(tmp_path, "--live"), prompt=no_stdin) == EXIT_OK
+    assert calls["run_bot"]["live"] is True

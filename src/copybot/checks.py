@@ -75,6 +75,13 @@ class CheckReport:
         return "\n".join(lines)
 
 
+def first_live_start(state: BotState) -> bool:
+    """¿El bot nunca ha operado en live? (sin posiciones suyas, órdenes pendientes ni libro).
+    Entonces TODA posición abierta en la cuenta es ajena y el arranque se niega."""
+    return (state.live_funding_cursor_ms is None and not state.managed_symbols
+            and not state.pending_orders)
+
+
 def config_hash(cfg: Config) -> str:
     return hashlib.sha256(cfg.model_dump_json().encode()).hexdigest()
 
@@ -193,10 +200,17 @@ async def run_check(
         positions = await live.positions()
         r.add("cuenta", equity > 0, f"capital (marginEquity) {equity} USD")
         others = sorted(set(positions) - state.managed_symbols)
-        if others:
+        if others and first_live_start(state):
+            r.add("posiciones abiertas", False,
+                  f"{', '.join(others)}: si el líder opera ese mercado el bot las tomaría como "
+                  "suyas y podría cerrarlas. Ciérralas antes del primer arranque live (o usa "
+                  "una cuenta de Kraken solo para el bot)")
+        elif others:
             r.add("posiciones no gestionadas", True,
-                  f"{', '.join(others)}: el bot no las tocará salvo que el líder opere ese "
-                  "mercado", fatal=False)
+                  f"{', '.join(others)}: el bot no las toca salvo que el líder opere ese "
+                  "mercado (entonces las adoptaría)", fatal=False)
+        else:
+            r.add("posiciones abiertas", True, "ninguna ajena al bot", fatal=False)
     except ExchangeError as exc:
         r.add("cuenta", False, str(exc))
 
