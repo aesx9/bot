@@ -37,7 +37,7 @@
 | ID | Gravedad | Hallazgo | PoC | Estado |
 |---|---|---|---|---|
 | A1 | Alta | Una excepción no prevista mata el bucle y el bot sigue "vivo" sin operar | B, C | resuelto (`fbbc0f8`) |
-| A2 | Alta | Posiciones huérfanas si el ciclo se aborta a mitad de ejecución | J, J2 | pendiente |
+| A2 | Alta | Posiciones huérfanas si el ciclo se aborta a mitad de ejecución | J, J2 | resuelto (`9770f80`) |
 | A3 | Alta | Estado compartido entre paper y live | E | pendiente |
 | A4 | Alta | Los fills del primer ciclo live no entran en el libro fiscal | A | pendiente |
 | A5 | Alta | Cierre de emergencia frágil | I, K | pendiente |
@@ -90,7 +90,7 @@ la pérdida; las altas debilitan justo las redes de seguridad.
 - **Regresión:** tests/integration/test_resilience.py; test_hyperliquid_ws.py::test_unexpected_callback_failure_reconnects_instead_of_killing_the_stream; test_live_exchange.py::test_malformed_account_log_entries_are_skipped_with_an_alert y ::test_malformed_payloads_raise_exchange_error
 
 ### A2 — Posiciones huérfanas
-**Gravedad:** alta · **Estado:** pendiente
+**Gravedad:** alta · **Estado:** resuelto en `9770f80`
 
 - **Dónde:** `engine.py` (actualización de `managed_symbols`),
   `executor.py` (`execute`).
@@ -101,6 +101,7 @@ la pérdida; las altas debilitan justo las redes de seguridad.
   y tras `--reset-halt` con el líder plano tampoco se cierra.
 - **Corrección:** registrar el símbolo y guardar antes de enviar; sincronizar
   stops también cuando el ciclo se aborta.
+- **Regresión:** tests/integration/test_resilience.py::test_position_opened_before_a_breaker_trip_stays_managed y ::test_orphan_is_closed_once_the_leader_is_flat_after_reset; test_live_exchange.py::test_stop_is_placed_even_when_the_cycle_aborts_mid_execution
 
 ### A3 — Estado compartido entre paper y live
 **Gravedad:** alta · **Estado:** pendiente
