@@ -61,7 +61,7 @@
 | B4 | Baja | Export no atómico; funding asignable a dos posiciones | (lectura) | resuelto (`03b9a29`) |
 | B5 | Baja | `PaperAccount.orders` crece sin límite | (lectura) | pendiente (documentado) |
 | B6 | Baja | Telegram: dedupe también de críticas; `InvalidURL` sin capturar | (lectura) | resuelto (`b769bfa`) |
-| B7 | Baja | `pip --upgrade pip` sin hash; sin backups | (lectura) | pendiente |
+| B7 | Baja | `pip --upgrade pip` sin hash; sin backups | (lectura) | resuelto (`9f67fb0`) |
 | B8 | Baja | Fila duplicada en `trades.csv` tras caída | (lectura) | pendiente |
 | B9 | Baja | Posible desfase de `/openpositions` tras un fill | (no verificable) | pendiente (documentado) |
 
@@ -305,9 +305,10 @@ El dedupe por texto también silencia alertas CRÍTICAS repetidas y
 - **Regresión:** tests/unit/test_alerts.py::test_critical_alerts_are_not_silenced_for_ten_minutes y ::test_any_failure_sending_is_swallowed_including_invalid_urls
 
 ### B7 — Instalación en el VPS
-**Gravedad:** baja · **Estado:** pendiente
+**Gravedad:** baja · **Estado:** resuelto en `9f67fb0`
 
 `pip install --upgrade pip` sin hash y sin backups de `state.json` ni CSV fiscales.
+- **Regresión:** tests/unit/test_deploy.py::test_setup_does_not_upgrade_pip_without_a_hash, ::test_setup_installs_the_backup_job, ::test_backup_contains_state_and_csv_but_never_secrets_logs_or_lock, ::test_backup_keeps_only_the_latest_and_leaves_no_temp_files, ::test_backup_with_nothing_to_copy_is_not_an_error
 
 ### B8 — Fila duplicada en `trades.csv`
 **Gravedad:** baja · **Estado:** pendiente
