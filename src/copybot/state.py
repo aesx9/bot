@@ -61,7 +61,9 @@ class BotState:
     live_startup_profile: bool | None = None
     last_equity_record_at: float | None = None  # epoch
     paced_streak: int = 0  # ciclos seguidos aplazando órdenes por el límite/min
-    kill_switch_closed: bool = False  # ya se cerró lo gestionado por el fichero STOP
+    kill_switch_closed: bool = False  # ya se cerró (del todo) lo gestionado por el fichero STOP
+    # Detenido con un cierre de emergencia (STOP o drawdown) que no terminó: se reintenta
+    emergency_close_pending: bool = False
     live_check: dict[str, Any] | None = None  # resultado del último --check superado
     live_funding_cursor_ms: int | None = None
     # Confirmación escrita de live: vale mientras no cambien config, clave ni código
@@ -100,6 +102,7 @@ class BotState:
             "last_equity_record_at": self.last_equity_record_at,
             "paced_streak": self.paced_streak,
             "kill_switch_closed": self.kill_switch_closed,
+            "emergency_close_pending": self.emergency_close_pending,
             "live_check": self.live_check,
             "live_funding_cursor_ms": self.live_funding_cursor_ms,
             "live_confirmation": self.live_confirmation,
@@ -131,6 +134,7 @@ class BotState:
             last_equity_record_at=d.get("last_equity_record_at"),
             paced_streak=int(d.get("paced_streak", 0)),
             kill_switch_closed=bool(d.get("kill_switch_closed", False)),
+            emergency_close_pending=bool(d.get("emergency_close_pending", False)),
             live_check=d.get("live_check"),
             live_funding_cursor_ms=d.get("live_funding_cursor_ms"),
             live_confirmation=d.get("live_confirmation"),

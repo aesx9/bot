@@ -302,7 +302,9 @@ del funding. Los avisos repetidos se agrupan cada 10 minutos.
    En el siguiente ciclo (60 s como mucho, o antes si hay actividad del
    líder) cierra todas las posiciones gestionadas con órdenes reduceOnly,
    sin límite de órdenes por minuto y en hasta 5 rondas, y se detiene. Si
-   algo queda abierto, envía una alerta crítica pidiendo cerrarlo a mano.
+   algo queda abierto, envía una alerta crítica y sigue reintentando el cierre mientras el
+   proceso esté vivo (cada símbolo se cierra por separado: un mercado con problemas no bloquea los
+   demás); si aun así no se cierra, hazlo a mano.
    **No toca tus posiciones manuales.**
 2. Comprueba el resultado con `sudo copybot-cli --status` y en la web de
    Kraken.

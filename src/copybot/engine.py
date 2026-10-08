@@ -115,6 +115,7 @@ class Engine:
         breaker_clock: Callable[[], float] | None = None,
         emergency_rounds: int = 5,
         emergency_pause_seconds: float = 2,
+        emergency_retry_seconds: float = 15,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self.cfg = cfg
@@ -139,8 +140,13 @@ class Engine:
         self._sync_cycles = 0
         self._emergency_rounds = emergency_rounds
         self._emergency_pause = emergency_pause_seconds
+        self._emergency_retry_seconds = emergency_retry_seconds
         self._sleep = sleep
         self._mapper_markets: set[str] = set()
+        # Último mercado y precio conocidos: permiten cerrar en emergencia aunque Kraken
+        # deje de listar un mercado o falle la lectura pública
+        self._known_markets: dict[str, MarketSpec] = {}
+        self._last_prices: dict[str, Decimal] = {}
         self._lock = asyncio.Lock()
         self.last_report: CycleReport | None = None
         self.last_cycle_at: datetime | None = None
@@ -207,6 +213,8 @@ class Engine:
         if stop is not None:
             return await self._kill_switch(stop)
         if self.state.halted:
+            if self.state.emergency_close_pending:
+                return await self._retry_emergency_close()
             return CycleReport(Outcome.HALTED, self.state.halt_reason)
 
         try:
@@ -257,6 +265,7 @@ class Engine:
         markets = await self._market.instruments()
         tickers = await self._market.tickers()
         mapper = self._mapper_for(markets)
+        self._known_markets.update(markets)
         coin_for: dict[str, str] = {}
         for coin in eligible:
             sym = mapper.symbol_for(coin)
@@ -270,6 +279,7 @@ class Engine:
             if t is None or t.suspended:
                 raise KrakenDataError(f"{sym}: sin precio o mercado suspendido")
             prices[sym] = t.mark_price
+        self._last_prices.update(prices)
         missing = managed - set(markets)
         if missing:
             raise KrakenDataError(f"mercados gestionados no disponibles: {sorted(missing)}")
@@ -373,7 +383,9 @@ class Engine:
     ) -> CycleReport:
         reason = f"drawdown del {dd:.2f} % desde el máximo ({self.state.peak_equity_usd} USD)"
         if self.cfg.risk.close_all_on_drawdown and current:
-            reason += "; " + await self._close_all_managed()
+            message, complete = await self._close_all_managed()
+            self.state.emergency_close_pending = not complete
+            reason += "; " + message
         return await self._halt(reason)
 
     async def _kill_switch(self, stop: Path) -> CycleReport:
@@ -381,54 +393,88 @@ class Engine:
         reason = f"kill switch: existe {stop}"
         closed_now = False
         if self.cfg.risk.close_all_on_kill_switch and not state.kill_switch_closed:
-            reason += "; " + await self._close_all_managed()
-            state.kill_switch_closed = True
+            message, complete = await self._close_all_managed()
+            reason += "; " + message
+            # Solo se da por cerrado si no queda nada abierto: si no, se reintenta en
+            # cada ciclo mientras exista STOP (y el proceso sigue vivo para hacerlo)
+            state.kill_switch_closed = complete
+            state.emergency_close_pending = not complete
             closed_now = True
         if state.halted:
-            self._save()
-            if closed_now:
-                await self._alert.alert(Level.CRITICAL, reason)
+            await self._best_effort(Level.CRITICAL if closed_now else None, reason)
             return CycleReport(Outcome.HALTED, state.halt_reason)
         return await self._halt(reason)
 
-    async def _close_all_managed(self) -> str:
-        """Cierre de emergencia completo: rondas de órdenes reduceOnly sin límite del
-        circuit breaker hasta que no quede nada gestionado abierto (o se agoten)."""
+    async def _retry_emergency_close(self) -> CycleReport:
+        """Bot detenido con un cierre de emergencia sin terminar: se reintenta."""
+        message, complete = await self._close_all_managed()
+        self.state.emergency_close_pending = not complete
+        await self._best_effort(
+            Level.WARNING if complete else Level.CRITICAL,
+            f"reintento del cierre de emergencia: {message}")
+        return CycleReport(Outcome.HALTED, f"{self.state.halt_reason}; {message}")
+
+    async def _public_or_known(self) -> tuple[dict[str, MarketSpec], dict[str, Decimal]]:
+        """Mercados y precios mark para cerrar: los de ahora y, si fallan o faltan, los
+        últimos conocidos (cerrar con un precio algo viejo es mejor que no cerrar)."""
+        markets = dict(self._known_markets)
+        prices = dict(self._last_prices)
+        try:
+            markets.update(await self._market.instruments())
+        except Exception as exc:
+            log.error("cierre de emergencia: sin instrumentos frescos (%s)", type(exc).__name__)
+        try:
+            prices.update({s: t.mark_price for s, t in (await self._market.tickers()).items()})
+        except Exception as exc:
+            log.error("cierre de emergencia: sin precios frescos (%s)", type(exc).__name__)
+        return markets, prices
+
+    async def _close_all_managed(self) -> tuple[str, bool]:
+        """Cierre de emergencia: rondas de órdenes reduceOnly sin límite del circuit breaker.
+
+        Cada símbolo se trata por separado: un mercado sin especificación, sin precio o
+        con una orden incierta no impide cerrar los demás. Devuelve (mensaje, completo)."""
         last_error = ""
         for attempt in range(self._emergency_rounds):
             if attempt:
                 await self._sleep(self._emergency_pause)
             try:
-                markets = await self._market.instruments()
-                tickers = await self._market.tickers()
                 positions = await self._ex.positions()
                 current = {s: p for s, p in positions.items()
                            if p and s in self.state.managed_symbols}
                 if not current:
                     self.state.managed_symbols = set()
-                    return "posiciones gestionadas cerradas"
-                prices = {s: tickers[s].mark_price for s in current if s in tickers}
-                if set(prices) != set(current):
-                    raise KrakenDataError("sin precio para cerrar algún mercado")
-                actions = plan(targets={}, current=current, managed=set(current),
-                               prices=prices, markets=markets, cfg=self.cfg.planner)
-                await self._executor.execute(
-                    actions, markets=markets, positions=current,
-                    ctx=ExecutionContext(mode=self._ex.mode), emergency=True)
-            except CYCLE_ERRORS as exc:
+                    return "posiciones gestionadas cerradas", True
+                markets, prices = await self._public_or_known()
+                for sym, size in sorted(current.items()):
+                    try:
+                        spec, price = markets.get(sym), prices.get(sym)
+                        if spec is None or price is None:
+                            raise KrakenDataError(f"{sym}: sin especificación o precio para cerrar")
+                        actions = plan(targets={}, current={sym: size}, managed={sym},
+                                       prices={sym: price}, markets={sym: spec},
+                                       cfg=self.cfg.planner)
+                        await self._executor.execute(
+                            actions, markets=markets, positions={sym: size},
+                            ctx=ExecutionContext(mode=self._ex.mode), emergency=True)
+                    except Exception as exc:
+                        last_error = f"{sym}: {type(exc).__name__}: {exc}"
+                        log.error("cierre de emergencia, intento %d: %s", attempt + 1, last_error)
+            except Exception as exc:
                 last_error = f"{type(exc).__name__}: {exc}"
                 log.error("cierre de emergencia, intento %d: %s", attempt + 1, last_error)
         try:
             left = {s: p for s, p in (await self._ex.positions()).items()
                     if p and s in self.state.managed_symbols}
-        except CYCLE_ERRORS:
+        except Exception:
             left = {s: Decimal(0) for s in self.state.managed_symbols}
         if not left:
             self.state.managed_symbols = set()
-            return "posiciones gestionadas cerradas"
+            return "posiciones gestionadas cerradas", True
         self.state.managed_symbols = set(left)
         return (f"ERROR: siguen abiertas {sorted(left)} tras {self._emergency_rounds} "
-                f"intentos ({last_error}); CIÉRRALAS A MANO")
+                f"intentos ({last_error}); se reintenta mientras el bot siga en marcha; "
+                "si no, CIÉRRALAS A MANO"), False
 
     async def _sync_protective_stops(
         self, positions: dict[str, Decimal], markets: dict[str, MarketSpec]
@@ -475,7 +521,7 @@ class Engine:
 
         async def run_cycle(trigger: str, when: datetime | None = None) -> None:
             report = await self.cycle(trigger, when)
-            if report.outcome is Outcome.HALTED:
+            if report.outcome is Outcome.HALTED and not self.state.emergency_close_pending:
                 stopped.set()
 
         async def debounced() -> None:
@@ -498,8 +544,11 @@ class Engine:
         async def reconcile_loop() -> None:
             while not stopped.is_set():
                 await run_cycle("rest")
+                wait = float(timing.reconcile_interval_seconds)
+                if self.state.emergency_close_pending:  # cierre sin terminar: reintentar pronto
+                    wait = min(wait, self._emergency_retry_seconds)
                 with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(stopped.wait(), float(timing.reconcile_interval_seconds))
+                    await asyncio.wait_for(stopped.wait(), wait)
 
         async def heartbeat() -> None:
             while not stopped.is_set():

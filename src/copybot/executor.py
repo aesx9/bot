@@ -185,12 +185,24 @@ class Executor:
             self._state.pending_orders[req.cli_ord_id] = info
             self._state.managed_symbols.add(a.symbol)
             self._breaker.record(a.notional_usd)
-            self._store.save(self._state)
+            if emergency:
+                # Un cierre reduceOnly de emergencia nunca puede quedar bloqueado por no
+                # poder escribir en disco (disco lleno, sistema de ficheros de solo lectura).
+                self._best_effort_save()
+            else:
+                self._store.save(self._state)
 
             result = await self._send(req)
             del self._state.pending_orders[req.cli_ord_id]
-            self._record(info, result)
-            self._store.save(self._state)
+            if emergency:
+                try:
+                    self._record(info, result)
+                except Exception:
+                    log.exception("cierre de emergencia: no se pudo registrar la operación")
+                self._best_effort_save()
+            else:
+                self._record(info, result)
+                self._store.save(self._state)
             results.append(result)
 
             if result.filled_size > 0:
@@ -201,6 +213,12 @@ class Executor:
             if a.kind is ActionKind.FLIP_CLOSE and result.status is not OrderStatus.FILLED:
                 incomplete_flip.add(a.symbol)
         return ExecutionReport(results)
+
+    def _best_effort_save(self) -> None:
+        try:
+            self._store.save(self._state)
+        except Exception:
+            log.exception("cierre de emergencia: no se pudo guardar el estado; se sigue")
 
     async def _send(self, req: OrderRequest) -> OrderResult:
         try:

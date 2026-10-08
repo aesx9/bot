@@ -54,6 +54,7 @@ def reset_halt(state: BotState) -> None:
     state.consecutive_errors = 0
     state.paced_streak = 0
     state.kill_switch_closed = False
+    state.emergency_close_pending = False
     state.live_confirmation = None
     state.sanity = SanityState()
 
