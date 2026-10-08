@@ -19,8 +19,10 @@ _secrets: set[str] = set()
 
 _PATTERNS: tuple[re.Pattern[str], ...] = (
     # Cabeceras de autenticación de Kraken Futures (y genéricas)
+    # Con esquema opcional ("Authorization: Bearer <token>"): se enmascara el token entero,
+    # no solo la palabra Bearer
     re.compile(r"(?i)\b(apikey|authent|authorization|api[_-]?secret|api[_-]?key)"
-               r"(\s*[:=]\s*|['\"]\s*:\s*['\"])([^\s'\",}]+)"),
+               r"(\s*[:=]\s*|['\"]\s*:\s*['\"])(?:(?:bearer|basic|token)\s+)?([^\s'\",}]+)"),
     # Token de bot de Telegram dentro de URLs: /bot<id>:<token>/
     re.compile(r"(bot)(\d+:)([A-Za-z0-9_-]{20,})"),
 )

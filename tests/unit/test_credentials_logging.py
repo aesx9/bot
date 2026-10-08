@@ -94,3 +94,19 @@ def test_generic_patterns_are_redacted(text: str) -> None:
     assert "abcdef123456" not in out  # pragma: allowlist secret
     assert "c2lnbmF0dXJl" not in out
     assert "AAAbbbCCCdddEEEfffGGGhhh" not in out
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Authorization: Bearer abcdef1234567890SECRET",
+        'headers={"Authorization": "Bearer abcdef1234567890SECRET"}',
+        "authorization=Basic abcdef1234567890SECRET",
+        "Authorization: Token abcdef1234567890SECRET",
+        "Authorization: abcdef1234567890SECRET",
+    ],
+)
+def test_authorization_schemes_hide_the_whole_token(text: str) -> None:
+    """B2: solo se enmascaraba la palabra Bearer y el token quedaba en claro."""
+    out = redact(text)
+    assert "abcdef1234567890SECRET" not in out and REDACTED in out
