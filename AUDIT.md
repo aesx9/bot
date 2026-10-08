@@ -58,7 +58,7 @@
 | B1 | Baja | `config.toml` no ignorado; pre-commit voluntario; sin CI | (lectura) | resuelto (`dbc9c96`) |
 | B2 | Baja | `Authorization: Bearer x` deja el token | (lectura) | resuelto (`8094e83`) |
 | B3 | Baja | Año fiscal y día BCE en UTC en vez de Madrid | (lectura) | resuelto (`2f3d6c2`) |
-| B4 | Baja | Export no atómico; funding asignable a dos posiciones | (lectura) | pendiente |
+| B4 | Baja | Export no atómico; funding asignable a dos posiciones | (lectura) | resuelto (`03b9a29`) |
 | B5 | Baja | `PaperAccount.orders` crece sin límite | (lectura) | pendiente (documentado) |
 | B6 | Baja | Telegram: dedupe también de críticas; `InvalidURL` sin capturar | (lectura) | pendiente |
 | B7 | Baja | `pip --upgrade pip` sin hash; sin backups | (lectura) | pendiente |
@@ -285,10 +285,11 @@ para el año equivocado y toma el tipo del día equivocado.
 - **Regresión:** tests/unit/test_fiscal.py::test_madrid_time_matches_the_tz_database_for_every_hour_of_several_years y ::test_position_closed_at_year_end_utc_belongs_to_the_next_year_in_spain
 
 ### B4 — Export fiscal no atómico
-**Gravedad:** baja · **Estado:** pendiente
+**Gravedad:** baja · **Estado:** resuelto en `03b9a29`
 
 El export sobrescribe y puede dejar ficheros parciales si falla el BCE; un
 funding puede asignarse a dos posiciones (sin marca `used`).
+- **Regresión:** tests/unit/test_fiscal.py::test_failed_rate_lookup_leaves_no_partial_files_and_keeps_the_previous_export, ::test_export_files_are_private, ::test_funding_at_a_direction_change_is_counted_once_and_by_the_open_position
 
 ### B5 — `PaperAccount.orders` crece sin límite
 **Gravedad:** baja · **Estado:** pendiente (documentado)
