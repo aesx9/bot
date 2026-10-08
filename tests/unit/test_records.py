@@ -48,3 +48,11 @@ def test_secrets_never_reach_csv(tmp_path: Path) -> None:
     register_secret(secret)
     CsvRecorder(tmp_path).trade(trade("buy", "100", cli=secret))
     assert secret not in (tmp_path / "trades.csv").read_text()
+
+
+def test_decimals_are_written_without_scientific_notation(tmp_path: Path) -> None:
+    rec = TradeRecord(NOW, "live", "PF_PEPEUSD", "open", "buy", D("5E+3"), False, None,
+                      D("9E-7"), D("9E-7"), None, None, "abc", "filled")
+    CsvRecorder(tmp_path).trade(rec)
+    row = list(csv.DictReader((tmp_path / "trades.csv").open()))[0]
+    assert (row["tamano"], row["precio_referencia"]) == ("5000", "0.0000009")

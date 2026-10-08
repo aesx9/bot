@@ -8,6 +8,12 @@ from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal, localcontext
 from enum import StrEnum
 
 
+def plain(d: Decimal) -> str:
+    """Decimal en notación posicional ('5000', nunca '5E+3'; '0.0000009', nunca '9E-7'),
+    el único formato que se envía a Kraken o se escribe en los CSV."""
+    return format(d, "f")
+
+
 class Side(StrEnum):
     BUY = "buy"
     SELL = "sell"

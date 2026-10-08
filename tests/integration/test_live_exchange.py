@@ -402,3 +402,33 @@ async def test_prepare_ledger_is_idempotent_and_runs_once(env: Env) -> None:
     await env.live.prepare_ledger(NOW + timedelta(hours=1))
     assert env.state.live_funding_cursor_ms == first
     assert len([c for c in env.kraken.calls if c[1].endswith("/fills")]) == n
+
+
+# --- M1: nunca notación científica en lo que se envía a Kraken ---
+
+POSITIONAL = __import__("re").compile(r"^\d+(\.\d+)?$")
+
+
+async def test_negative_precision_market_sends_positional_decimals(env: Env) -> None:
+    """PoC (formato): PF_PEPEUSD (precisión -3, tick 1E-10) enviaba size=5E+3."""
+    from copybot.executor import limit_price
+
+    spec = FakeMarket().specs["PF_PEPEUSD"]
+    size = spec.round_down(D("5200"))
+    assert str(size) == "5E+3"  # el Decimal real tiene exponente: la serialización lo arregla
+    price = limit_price(Side.BUY, D("0.0000009"), D("0.5"), spec.tick_size)
+    assert "E" in str(price)
+    await env.live.send_order(OrderRequest("c1", "PF_PEPEUSD", Side.BUY, size, price, False))
+    sent = env.kraken.sends()[-1]
+    assert (sent["size"], sent["limitPrice"]) == ("5000", "0.0000009045")
+    assert POSITIONAL.match(sent["size"]) and POSITIONAL.match(sent["limitPrice"])
+
+
+async def test_stop_prices_and_sizes_are_positional(env: Env) -> None:
+    spec = FakeMarket().specs["PF_PEPEUSD"]
+    env.kraken.positions = [{"symbol": "PF_PEPEUSD", "side": "long", "size": "5000",
+                             "price": "0.0000009"}]
+    await env.live.sync_catastrophe_stops({"PF_PEPEUSD": D("5E+3")}, {"PF_PEPEUSD": spec}, D(20))
+    [stop] = env.kraken.sends("stp")
+    assert POSITIONAL.match(stop["size"]) and POSITIONAL.match(stop["stopPrice"])
+    assert stop["size"] == "5000"

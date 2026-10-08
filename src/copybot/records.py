@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from copybot.exchange.base import FundingEvent
+from copybot.models import plain
 from copybot.redaction import redact
 
 TRADES_HEADER = (
@@ -69,6 +70,8 @@ def _fmt(v: object) -> str:
         return ""
     if isinstance(v, datetime):
         return v.isoformat()
+    if isinstance(v, Decimal):
+        return plain(v)
     return str(v)
 
 

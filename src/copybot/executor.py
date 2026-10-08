@@ -40,7 +40,7 @@ from copybot.exchange.base import (
     OrderResult,
     OrderStatus,
 )
-from copybot.models import Action, ActionKind, MarketSpec, Side
+from copybot.models import Action, ActionKind, MarketSpec, Side, plain
 from copybot.records import CsvRecorder, TradeRecord
 from copybot.risk import CircuitBreaker
 from copybot.state import BotState, StateStore
@@ -172,9 +172,9 @@ class Executor:
                 reduce_only=a.reduce_only,
             )
             info: dict[str, Any] = {
-                "symbol": a.symbol, "side": a.side.value, "size": str(a.size),
-                "limit_price": str(req.limit_price), "reduce_only": a.reduce_only,
-                "ref_price": str(a.ref_price), "action": a.kind.value,
+                "symbol": a.symbol, "side": a.side.value, "size": plain(a.size),
+                "limit_price": plain(req.limit_price), "reduce_only": a.reduce_only,
+                "ref_price": plain(a.ref_price), "action": a.kind.value,
                 "leader_price": _opt(ctx.leader_prices.get(a.symbol)),
                 "leader_time": None if ctx.leader_time is None else ctx.leader_time.isoformat(),
                 "mode": ctx.mode, "created_at": self._now().isoformat(),
@@ -260,4 +260,4 @@ class Executor:
 
 
 def _opt(v: Decimal | None) -> str | None:
-    return None if v is None else str(v)
+    return None if v is None else plain(v)

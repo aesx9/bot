@@ -15,4 +15,5 @@ positions = st.dictionaries(st.sampled_from(SYMBOLS), nonzero, max_size=len(SYMB
 price_maps = st.fixed_dictionaries({s: prices for s in SYMBOLS})
 
 # Pasos reales de Kraken: contractValueTradePrecision entre -3 y 4
-STEPS = tuple(Decimal(10) ** -p for p in range(-3, 5))
+# Misma construcción que el código real (kraken_public.parse_instruments): 1E+3, 0.0001...
+STEPS = tuple(Decimal(1).scaleb(-p) for p in range(-3, 5))

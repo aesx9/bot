@@ -40,7 +40,7 @@ from copybot.exchange.base import (
     OrderStatus,
 )
 from copybot.exchange.kraken_auth import KrakenPrivateClient
-from copybot.models import MarketSpec, Side
+from copybot.models import MarketSpec, Side, plain
 from copybot.state import BotState
 
 log = logging.getLogger(__name__)
@@ -163,7 +163,7 @@ class LiveExchange:
     async def _send_order(self, req: OrderRequest) -> OrderResult:
         payload = await self._c.request("POST", f"{API}/sendorder", [
             ("orderType", "ioc"), ("symbol", req.symbol), ("side", req.side.value),
-            ("size", str(req.size)), ("limitPrice", str(req.limit_price)),
+            ("size", plain(req.size)), ("limitPrice", plain(req.limit_price)),
             ("cliOrdId", req.cli_ord_id), ("reduceOnly", "true" if req.reduce_only else "false"),
         ])
         send = payload.get("sendStatus")
@@ -406,7 +406,8 @@ class LiveExchange:
                 await self._cancel(o)
             result = await self._c.request("POST", f"{API}/sendorder", [
                 ("orderType", "stp"), ("symbol", symbol), ("side", side.value),
-                ("size", str(abs(size))), ("stopPrice", str(stop)), ("triggerSignal", "mark"),
+                ("size", plain(abs(size))), ("stopPrice", plain(stop)),
+                ("triggerSignal", "mark"),
                 ("reduceOnly", "true"), ("cliOrdId", STOP_PREFIX + uuid.uuid4().hex),
             ])
             status = (result.get("sendStatus") or {}).get("status")
