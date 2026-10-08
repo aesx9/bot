@@ -169,3 +169,34 @@ def test_each_funding_in_a_position_uses_the_rate_of_its_payment_day(tmp_path: P
     [p] = rows(export(tmp_path, 2026, tmp_path, RATES)[0])
     assert p["funding_pagado_eur"] == "2.00"  # 2.33 / 1.165; con el tipo del cierre sería 2.01
     assert p["fecha_tipo_bce_cierre"] == "2026-10-05"
+
+
+# --- B3: fechas en hora de Madrid ---
+
+
+def test_madrid_time_matches_the_tz_database_for_every_hour_of_several_years() -> None:
+    from zoneinfo import ZoneInfo
+
+    from copybot.analysis.positions import madrid
+
+    zone, t = ZoneInfo("Europe/Madrid"), datetime(2024, 1, 1, tzinfo=UTC)
+    while t.year < 2032:
+        expected = t.astimezone(zone)
+        got = madrid(t)
+        assert (got.year, got.month, got.day, got.hour) == (
+            expected.year, expected.month, expected.day, expected.hour), t
+        t += timedelta(minutes=30)
+
+
+def test_position_closed_at_year_end_utc_belongs_to_the_next_year_in_spain(tmp_path: Path) -> None:
+    """31/12/2025 23:30 UTC = 1/1/2026 00:30 en Madrid: año 2026 y tipo del 1 de enero."""
+    rec = CsvRecorder(tmp_path)
+    fill(rec, datetime(2025, 12, 30, 12, tzinfo=UTC), "buy", "1", "100", sym="PF_SOLUSD")
+    fill(rec, datetime(2025, 12, 31, 23, 30, tzinfo=UTC), "sell", "1", "110", sym="PF_SOLUSD")
+    rates = ecb.parse_rates(
+        "TIME_PERIOD,OBS_VALUE\n2025-12-30,1.1700\n2025-12-31,1.1750\n2026-01-02,1.1800\n", "p")
+    assert rows(export(tmp_path, 2025, tmp_path / "a", rates)[0]) == []
+    [p] = rows(export(tmp_path, 2026, tmp_path / "b", rates)[0])
+    # 1 de enero no es hábil para el BCE: se usa el último tipo anterior (31/12)
+    assert (p["fecha_tipo_bce_cierre"], p["tipo_eurusd_bce_cierre"]) == ("2025-12-31", "1.1750")
+    assert p["cierre_utc"].startswith("2025-12-31T23:30")  # los CSV siguen en UTC

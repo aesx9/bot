@@ -404,7 +404,7 @@ Genera tres ficheros:
 - `fiscal_resumen_<año>.csv`: subtotales por origen y total.
 
 Conversión a EUR con el **tipo de referencia diario del BCE**, cada flujo en
-su fecha: el resultado, al tipo del día de cierre; cada comisión, al del día
+su fecha **en hora de Madrid** (también el año fiscal; los CSV siguen en UTC): el resultado, al tipo del día de cierre; cada comisión, al del día
 en que se cobró; cada funding, al del día de su pago. Si ese día no hay tipo
 publicado, se usa el último anterior; la fuente y la fecha usada constan en
 el fichero. Si el BCE no responde, descarga `eurofxref-hist.csv` de la web

@@ -12,11 +12,30 @@ from __future__ import annotations
 import csv
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
 ZERO = Decimal(0)
+
+
+def _last_sunday(year: int, month: int) -> date:
+    d = date(year, month, 31)  # marzo y octubre tienen 31 días
+    return d - timedelta(days=(d.weekday() + 1) % 7)
+
+
+def madrid(t: datetime) -> datetime:
+    """Instante en hora de Madrid (CET/CEST), con la regla horaria de la UE: el horario de
+    verano va del último domingo de marzo al último de octubre, ambos a la 01:00 UTC.
+
+    El año fiscal y el día del tipo de cambio de una operación son los de España, no los de
+    UTC: una posición cerrada el 31/12 a las 23:30 UTC ya es 1 de enero en Madrid. Se
+    implementa sin depender de la base de datos horaria del sistema."""
+    utc = t.astimezone(UTC)
+    one_utc = datetime.min.time().replace(hour=1)
+    start = datetime.combine(_last_sunday(utc.year, 3), one_utc, UTC)
+    end = datetime.combine(_last_sunday(utc.year, 10), one_utc, UTC)
+    return utc + timedelta(hours=2 if start <= utc < end else 1)
 
 
 def read_rows(path: Path) -> list[dict[str, str]]:

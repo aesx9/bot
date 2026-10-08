@@ -40,7 +40,7 @@ import csv
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
@@ -49,6 +49,7 @@ from copybot.analysis.positions import (
     ZERO,
     Position,
     fills_from_rows,
+    madrid,
     read_rows,
     reconstruct,
     ts,
@@ -75,6 +76,11 @@ FUNDING_HEADER = (
 )
 WINDOW = timedelta(seconds=2)  # margen de reloj entre fills y apuntes del log
 CENT = Decimal("0.01")
+
+
+def local_date(t: datetime) -> date:
+    """Fecha en Madrid: la que cuenta para el tipo de cambio y el año fiscal."""
+    return madrid(t).date()
 
 
 def money(v: Decimal) -> Decimal:
@@ -172,9 +178,9 @@ def amounts(r: FiscalRow, rates: ecb.RateTable) -> Amounts:
     p = r.position
     assert p.closed_at is not None
     a = Amounts(count=1, gross_usd=p.realized_usd)
-    a.gross_eur = rates.usd_to_eur(p.realized_usd, p.closed_at.date())[0]
+    a.gross_eur = rates.usd_to_eur(p.realized_usd, local_date(p.closed_at))[0]
     for fee in r.fees:
-        rate, _ = rates.rate_for(fee.timestamp.date())
+        rate, _ = rates.rate_for(local_date(fee.timestamp))
         if fee.currency == "EUR":
             a.fees_eur += fee.amount
             a.fees_usd += fee.amount * rate
@@ -184,7 +190,7 @@ def amounts(r: FiscalRow, rates: ecb.RateTable) -> Amounts:
     for fund in r.funding:
         if fund.amount_usd == 0:
             continue
-        eur = rates.usd_to_eur(abs(fund.amount_usd), fund.timestamp.date())[0]
+        eur = rates.usd_to_eur(abs(fund.amount_usd), local_date(fund.timestamp))[0]
         if fund.amount_usd < 0:
             a.paid_usd += -fund.amount_usd
             a.paid_eur += eur
@@ -205,7 +211,7 @@ def write_positions(path: Path, rows: list[FiscalRow], rates: ecb.RateTable) -> 
         for r in rows:
             p = r.position
             assert p.closed_at is not None
-            rate, rate_day = rates.rate_for(p.closed_at.date())
+            rate, rate_day = rates.rate_for(local_date(p.closed_at))
             a = amounts(r, rates)
             w.writerow([
                 p.number, p.symbol, "largo" if p.direction > 0 else "corto",
@@ -234,7 +240,7 @@ def summarize(rows: list[FiscalRow], funding: list[Funding],
     for f in funding:
         if f.amount_usd == 0:
             continue
-        eur = rates.usd_to_eur(abs(f.amount_usd), f.timestamp.date())[0]
+        eur = rates.usd_to_eur(abs(f.amount_usd), local_date(f.timestamp))[0]
         if f.amount_usd < 0:
             year_funding.paid_usd += -f.amount_usd
             year_funding.paid_eur += eur
@@ -263,7 +269,7 @@ def write_funding(path: Path, funding: list[Funding], rates: ecb.RateTable) -> N
         w = csv.writer(fh)
         w.writerow(FUNDING_HEADER)
         for f in sorted(funding, key=lambda f: f.timestamp):
-            rate, rate_day = rates.rate_for(f.timestamp.date())
+            rate, rate_day = rates.rate_for(local_date(f.timestamp))
             paid = -f.amount_usd if f.amount_usd < 0 else ZERO
             received = f.amount_usd if f.amount_usd > 0 else ZERO
             w.writerow([
@@ -277,13 +283,13 @@ def export(data_dir: Path, year: int, out_dir: Path,
            rates_loader: ecb.RateTable | None = None) -> tuple[Path, Path, Path, list[str]]:
     closed, open_, fees, funding = load_live_data(data_dir)
     rows = assign(closed, fees, funding)
-    rows = [r for r in rows if r.position.closed_at and r.position.closed_at.year == year]
-    year_funding = [f for f in funding if f.timestamp.year == year]
+    rows = [r for r in rows if r.position.closed_at and madrid(r.position.closed_at).year == year]
+    year_funding = [f for f in funding if madrid(f.timestamp).year == year]
     notes = [f"posición abierta en {p.symbol} desde {p.opened_at.isoformat()}: no se declara "
              "hasta que se cierre" for p in open_.values()]
-    days = [r.position.closed_at.date() for r in rows if r.position.closed_at]
-    days += [f.timestamp.date() for f in year_funding]
-    days += [f.timestamp.date() for r in rows for f in r.fees]
+    days = [local_date(r.position.closed_at) for r in rows if r.position.closed_at]
+    days += [local_date(f.timestamp) for f in year_funding]
+    days += [local_date(f.timestamp) for r in rows for f in r.fees]
     rates = rates_loader
     if rates is None:  # sin nada que convertir no hace falta descargar
         rates = ecb.fetch(min(days), max(days)) if days else ecb.RateTable((), (), "sin datos")
