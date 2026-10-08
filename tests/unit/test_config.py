@@ -40,7 +40,7 @@ def test_defaults_are_paper_and_agreed_values() -> None:
     assert cfg.sizing.max_asset_pct_equity == 25
     assert cfg.risk.max_drawdown_pct == 15
     assert cfg.risk.close_all_on_drawdown is True
-    assert cfg.risk.catastrophe_stop_pct == 20
+    assert cfg.risk.catastrophe_stop_pct is None  # automático: drawdown / apalancamiento
     assert cfg.execution.slippage_cap_pct == Decimal("0.5")
 
 

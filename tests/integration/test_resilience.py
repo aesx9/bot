@@ -229,3 +229,28 @@ async def test_sigterm_and_sigint_request_a_graceful_stop(tmp_path: Path) -> Non
             asyncio.get_running_loop().call_later(0.1, os.kill, os.getpid(), sig)
             await asyncio.wait_for(w.engine.run_forever(lambda **cb: IdleStream(**cb)), 5)
         assert w.engine.stop_requested and not w.state.halted
+
+
+# --- M13: un HALT sin cierre avisa de lo que queda abierto ---
+
+
+async def test_halt_without_auto_close_alerts_what_stays_open(tmp_path: Path) -> None:
+    from copybot.alerts import Level
+
+    w = World(tmp_path, FakeLeader("100000", BTC="1", ETH="10"),
+              risk={"max_notional_per_hour_usd": 200})
+    assert await w.cycle() is Outcome.HALTED  # el breaker detiene sin cerrar la que ya abrió
+    [(level, text)] = [(lvl, t) for lvl, t in w.alerts.sent if "bot detenido" in t]
+    assert level is Level.CRITICAL
+    opened = next(iter(await w.positions()))
+    assert "SIGUEN ABIERTAS" in text and opened in text
+    assert "Sin stops de catástrofe" in text  # en paper no hay stops en el exchange
+
+
+async def test_halt_with_everything_closed_has_no_open_positions_note(tmp_path: Path) -> None:
+    w = World(tmp_path, FakeLeader("100000", BTC="1"))
+    await w.cycle()
+    (w.tmp / "STOP").touch()
+    await w.cycle()
+    [text] = [t for _, t in w.alerts.sent if "bot detenido" in t or "kill switch" in t][-1:]
+    assert "SIGUEN ABIERTAS" not in text

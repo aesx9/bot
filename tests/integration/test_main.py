@@ -387,3 +387,14 @@ def test_restarts_with_the_bots_own_positions_are_not_blocked(
 
     assert main(live_args(tmp_path, "--live"), prompt=no_stdin) == EXIT_OK
     assert calls["run_bot"]["live"] is True
+
+
+def test_live_summary_shows_the_computed_catastrophe_stop() -> None:
+    from copybot.config import Config
+    from copybot.main import live_summary
+
+    cfg = Config.model_validate({"leader_address": LEADER, "mode": "live"})
+    assert "al 15.00 % de la entrada (drawdown 15 % / apalancamiento 1x)" in live_summary(
+        cfg, startup_profile=True)
+    assert "al 7.50 % de la entrada (drawdown 15 % / apalancamiento 2x)" in live_summary(
+        cfg, startup_profile=False)

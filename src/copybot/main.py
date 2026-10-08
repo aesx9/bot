@@ -59,6 +59,7 @@ from copybot.records import CsvRecorder
 from copybot.risk import (
     STOP_FILENAME,
     activate_startup_profile_on_first_live,
+    catastrophe_stop_pct,
     effective_sizing,
     release_startup_profile,
     reset_halt,
@@ -137,8 +138,9 @@ def live_summary(cfg: Config, startup_profile: bool) -> str:
         f"{r.max_notional_per_hour_usd} USD/h (detiene)",
         f"Drawdown: {r.max_drawdown_pct} % (cerrar todo: {r.close_all_on_drawdown}); "
         f"kill switch: fichero {STOP_FILENAME} (cerrar todo: {r.close_all_on_kill_switch})",
-        f"Stop de catástrofe: {'sí' if r.catastrophe_stop_enabled else 'NO'}, "
-        f"al {r.catastrophe_stop_pct} % de la entrada",
+        f"Stop de catástrofe: {'sí' if r.catastrophe_stop_enabled else 'NO'}, al "
+        f"{catastrophe_stop_pct(r, sz.max_total_leverage):.2f} % de la entrada "
+        f"(drawdown {r.max_drawdown_pct} % / apalancamiento {sz.max_total_leverage}x)",
     ]
     return "\n".join(lines)
 

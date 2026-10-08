@@ -124,6 +124,21 @@ class CircuitBreaker:
         self._state.breaker_log.append((self._clock(), notional_usd))
 
 
+def catastrophe_stop_pct(risk: RiskConfig, effective_leverage: Decimal) -> Decimal:
+    """Distancia (%) del stop de catástrofe al precio de entrada.
+
+    Con apalancamiento L, una caída de d % del precio es una pérdida de d x L % del capital:
+    el stop se pone donde esa pérdida iguala al límite de drawdown (max_drawdown_pct / L),
+    de modo que el exchange protege con el mismo criterio que el propio bot, incluso con el
+    bot caído. La config solo puede acercarlo; siempre dentro de los límites absolutos."""
+    drawdown = min(risk.max_drawdown_pct, limits.HARD_MAX_DRAWDOWN_PCT)
+    pct = drawdown / effective_leverage
+    if risk.catastrophe_stop_pct is not None:
+        pct = min(pct, risk.catastrophe_stop_pct)
+    return min(max(pct, limits.HARD_MIN_CATASTROPHE_STOP_PCT),
+               limits.HARD_MAX_CATASTROPHE_STOP_PCT)
+
+
 # --- Perfil de arranque live ---
 
 

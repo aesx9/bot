@@ -114,7 +114,7 @@ Lo esencial:
 | `[planner]` | Orden mínima (10 USD) y umbral de reajuste (5 %). |
 | `[filters]` | `allow`, `deny` e ignorar las posiciones preexistentes del líder. |
 | `[symbols]` | `overrides` (coin → `PF_…USD`) y `size_factor` (p. ej. `kPEPE`). |
-| `[risk]` | Drawdown, circuit breaker, kill switch y stop de catástrofe (20 %). |
+| `[risk]` | Drawdown, circuit breaker, kill switch y stop de catástrofe (drawdown / apalancamiento: 15 % en el perfil de arranque, 7,5 % a 2x). |
 | `[sanity]` | Controles del líder (salto ×20, capital ±50 %, N = 3). |
 | `[paper]` | Colateral simulado, haircut EUR y comisión taker (0,05 %, verificada). |
 | `[telegram]` | `enabled = true` para recibir alertas. |
@@ -249,7 +249,7 @@ otro con `rank_leaders`.
    primera vez activa el **perfil de arranque** (1x y 100 USD por activo).
    Deja que haga uno o dos ciclos y para con `Ctrl+C`. Comprueba en la web de
    Kraken las posiciones y los stops de catástrofe (órdenes stop reduceOnly al
-   20 % de la entrada).
+   15 % de la entrada con el perfil de arranque: el drawdown dividido por el apalancamiento).
 5. **Pasa a servicio:**
    ```bash
    echo "COPYBOT_EXTRA_ARGS=--live" | sudo tee /var/lib/copybot/service.env
@@ -350,6 +350,11 @@ borra `/var/lib/copybot/STOP` si lo creaste; ejecuta
 primer arranque live a mano (la confirmación se invalidó).
 
 ## Paradas automáticas y cómo reanudar
+
+> Solo el drawdown y el fichero `STOP` cierran posiciones. **Cualquier otra parada deja las
+> posiciones abiertas** (con los stops de catástrofe del exchange: distancia = drawdown /
+> apalancamiento) y envía una alerta CRÍTICA que lista lo que queda abierto: revísalo y ciérralo
+> a mano si hace falta, porque un bot detenido no vigila nada.
 
 | Motivo | Qué hace el bot | Qué hacer |
 | - | - | - |

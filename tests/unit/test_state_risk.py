@@ -236,3 +236,37 @@ def test_effective_sizing_with_startup_profile() -> None:
     eff2 = effective_sizing(strict, startup_profile=True)
     assert (eff2.max_asset_usd, eff2.max_total_leverage) == (D(50), D("0.5"))
     assert eff2.max_asset_pct_equity <= 50
+
+
+# --- M13: stop de catástrofe = drawdown / apalancamiento efectivo ---
+
+
+@pytest.mark.parametrize(
+    ("leverage", "explicit", "expected"),
+    [
+        ("1", None, "15"),  # perfil de arranque: 1x -> 15 %
+        ("2", None, "7.5"),  # 2x -> 7,5 %
+        ("3", None, "5"),  # 3x -> 5 % (mínimo absoluto)
+        ("0.5", None, "30"),
+        ("0.1", None, "50"),  # 150 % -> máximo absoluto
+        ("1", "10", "10"),  # la config puede acercarlo...
+        ("2", "20", "7.5"),  # ...pero nunca alejarlo del criterio de drawdown
+    ],
+)
+def test_catastrophe_stop_distance_follows_drawdown_over_leverage(
+    leverage: str, explicit: str | None, expected: str
+) -> None:
+    from copybot.risk import catastrophe_stop_pct
+
+    cfg = RiskConfig(max_drawdown_pct=D(15), catastrophe_stop_pct=None if explicit is None
+                     else D(explicit))
+    assert catastrophe_stop_pct(cfg, D(leverage)) == D(expected)
+
+
+def test_stop_loss_at_the_stop_equals_the_drawdown_limit() -> None:
+    from copybot.risk import catastrophe_stop_pct
+
+    cfg = RiskConfig(max_drawdown_pct=D(12))
+    for leverage in (D(1), D(2), D(3)):
+        pct = catastrophe_stop_pct(cfg, leverage)
+        assert pct * leverage <= D(12) or pct == limits.HARD_MIN_CATASTROPHE_STOP_PCT

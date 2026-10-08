@@ -49,6 +49,7 @@ from copybot.planner import PlannerError, plan
 from copybot.records import CsvRecorder
 from copybot.risk import (
     CircuitBreaker,
+    catastrophe_stop_pct,
     drawdown_tripped,
     effective_sizing,
     halt,
@@ -183,9 +184,26 @@ class Engine:
             except Exception:
                 log.exception("no se pudo enviar la alerta")
 
+    def _catastrophe_pct(self) -> Decimal:
+        return catastrophe_stop_pct(self.cfg.risk, self._sizing_cfg.max_total_leverage)
+
+    def _open_positions_note(self) -> str:
+        """Qué queda abierto y con qué protección: un HALT (salvo drawdown y STOP) no cierra."""
+        symbols = sorted(self.state.managed_symbols)
+        if not symbols:
+            return ""
+        has_stops = (hasattr(self._ex, "sync_catastrophe_stops")
+                     and self.cfg.risk.catastrophe_stop_enabled)
+        protection = (f"Quedan los stops de catástrofe del exchange al "
+                      f"{self._catastrophe_pct():.2f} % del precio de entrada." if has_stops
+                      else "Sin stops de catástrofe del exchange (paper o desactivados).")
+        return (f" LAS POSICIONES GESTIONADAS SIGUEN ABIERTAS: {', '.join(symbols)}. {protection} "
+                "Revísalas y ciérralas a mano si hace falta (el bot no vigila nada detenido).")
+
     async def _halt(self, reason: str) -> CycleReport:
         halt(self.state, reason, self._now())
-        await self._best_effort(Level.CRITICAL, f"bot detenido: {reason}")
+        await self._best_effort(Level.CRITICAL,
+                                f"bot detenido: {reason}.{self._open_positions_note()}")
         return CycleReport(Outcome.HALTED, reason)
 
     def _mapper_for(self, markets: dict[str, MarketSpec]) -> SymbolMapper:
@@ -596,7 +614,7 @@ class Engine:
         if sync is None or not self.cfg.risk.catastrophe_stop_enabled:
             return
         managed = {s: p for s, p in positions.items() if p and s in self.state.managed_symbols}
-        for warning in await sync(managed, markets, self.cfg.risk.catastrophe_stop_pct):
+        for warning in await sync(managed, markets, self._catastrophe_pct()):
             await self._alert.alert(Level.CRITICAL, warning)
 
     async def _after_trading(self, leader_equity: Decimal) -> None:

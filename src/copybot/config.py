@@ -165,7 +165,9 @@ class RiskConfig(_Strict):
     max_consecutive_paced_cycles: int = Field(default=3, gt=0)
     close_all_on_kill_switch: bool = True
     catastrophe_stop_enabled: bool = True  # solo aplica en live
-    catastrophe_stop_pct: Dec = Field(default=Decimal("20"))
+    # None = automático: max_drawdown_pct / apalancamiento efectivo (así, si el stop salta, la
+    # pérdida de capital es la del límite de drawdown). Un valor lo ACERCA aún más, nunca lo aleja.
+    catastrophe_stop_pct: Dec | None = None
 
     @model_validator(mode="after")
     def _within_hard_limits(self) -> Self:
@@ -179,7 +181,7 @@ class RiskConfig(_Strict):
             raise ValueError("max_consecutive_errors supera el tope absoluto")
         if self.max_consecutive_paced_cycles > limits.HARD_MAX_PACED_CYCLES:
             raise ValueError("max_consecutive_paced_cycles supera el tope absoluto")
-        if not (
+        if self.catastrophe_stop_pct is not None and not (
             limits.HARD_MIN_CATASTROPHE_STOP_PCT
             <= self.catastrophe_stop_pct
             <= limits.HARD_MAX_CATASTROPHE_STOP_PCT

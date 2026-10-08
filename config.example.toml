@@ -39,7 +39,9 @@ max_consecutive_errors = 5           # tope absoluto: 5
 max_consecutive_paced_cycles = 3     # ciclos seguidos aplazando órdenes; tope: 5
 close_all_on_kill_switch = true      # fichero STOP: cerrar lo gestionado y parar
 catastrophe_stop_enabled = true      # solo live
-catastrophe_stop_pct = 20
+# catastrophe_stop_pct = 10         # opcional: solo puede ACERCAR el stop; por defecto es
+                                     # max_drawdown_pct / apalancamiento efectivo (1x en el perfil de
+                                     # arranque -> 15 %; 2x -> 7,5 %)
 
 [timing]
 debounce_seconds = 2

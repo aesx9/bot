@@ -543,3 +543,31 @@ async def test_kill_switch_cancels_the_catastrophe_stops(env: Env, tmp_path: Pat
     assert (await engine.cycle()).outcome.value == "halted"
     assert await env.live.positions() == {}
     assert env.kraken.open_orders == []
+
+
+async def test_catastrophe_stop_distance_comes_from_drawdown_and_leverage(
+    env: Env, tmp_path: Path
+) -> None:
+    """M13: con el perfil de arranque (1x) y drawdown 15 %, el stop de un largo a 100 va a 85."""
+    from copybot.alerts import LogAlerter
+    from copybot.config import Config
+    from copybot.engine import Engine
+    from tests.conftest import LEADER
+    from tests.fakes import FakeLeader
+
+    cfg = Config.model_validate({"leader_address": LEADER, "mode": "live",
+                                 "filters": {"ignore_preexisting": False}})
+    market = FakeMarket()
+    market.set_mark(SOL, "100")
+    env.kraken.fill_price = D(100)
+    leader = FakeLeader("100000", SOL="5000")
+    leader.clock = lambda: NOW
+    leader.mids.update(SOL=D(100))
+    engine = Engine(cfg=cfg, state=env.state, store=StateStore(tmp_path / "s.json"),
+                    leader=leader, market=market, exchange=env.live,
+                    recorder=CsvRecorder(tmp_path), alerter=LogAlerter(), kill_dirs=[tmp_path],
+                    startup_profile=True, now=lambda: NOW,
+                    breaker_clock=lambda: NOW.timestamp())
+    await engine.cycle()
+    [stop] = env.kraken.open_orders
+    assert D(stop["stopPrice"]) == D(85)
