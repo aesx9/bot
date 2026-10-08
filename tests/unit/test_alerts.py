@@ -79,3 +79,30 @@ async def test_a_failing_send_never_logs_the_token(
             with caplog.at_level(logging.WARNING):
                 await TelegramAlerter(CREDS, http).alert(Level.INFO, "hola")
     assert "AAAbbbCCC" not in "\n".join(r.getMessage() for r in caplog.records)
+
+
+async def test_critical_alerts_are_not_silenced_for_ten_minutes() -> None:
+    """B6: una crítica repetida (p. ej. el cierre sigue sin completarse) se volvía a avisar
+    solo pasados 10 minutos, igual que un aviso trivial."""
+    clock = Clock()
+    with respx.mock(assert_all_called=False) as router:
+        route = router.post(SEND).respond(200)
+        async with httpx.AsyncClient() as http:
+            alerter = TelegramAlerter(CREDS, http, clock=clock)
+            await alerter.alert(Level.CRITICAL, "siguen abiertas ['PF_XBTUSD']")
+            await alerter.alert(Level.CRITICAL, "siguen abiertas ['PF_XBTUSD']")  # ráfaga
+            assert route.call_count == 1
+            clock.t += 61  # un minuto después, no diez
+            await alerter.alert(Level.CRITICAL, "siguen abiertas ['PF_XBTUSD']")
+            assert route.call_count == 2
+            # el mismo texto con otro nivel es otra alerta
+            await alerter.alert(Level.WARNING, "siguen abiertas ['PF_XBTUSD']")
+            assert route.call_count == 3
+
+
+async def test_any_failure_sending_is_swallowed_including_invalid_urls() -> None:
+    class BrokenHttp:
+        async def post(self, *a: object, **kw: object) -> httpx.Response:
+            raise httpx.InvalidURL("URL inválida")
+
+    await TelegramAlerter(CREDS, BrokenHttp()).alert(Level.CRITICAL, "x")  # type: ignore[arg-type]
