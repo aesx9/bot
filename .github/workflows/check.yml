@@ -14,10 +14,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      # Acciones fijadas por SHA de commit (la etiqueta puede moverse): checkout v4.4.0 y
+      # setup-python v5.6.0. Para actualizar, resolver la etiqueta nueva con
+      # `git ls-remote --tags https://github.com/actions/<repo>` y cambiar el SHA y el comentario.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           fetch-depth: 0  # detect-secrets recorre los ficheros versionados
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
         with:
           python-version: "3.12"
       - name: Entorno (dependencias fijadas con hash)

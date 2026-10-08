@@ -39,3 +39,11 @@ def test_ci_runs_the_full_check_with_pinned_dependencies() -> None:
     wf = (ROOT / ".github" / "workflows" / "check.yml").read_text()
     assert "make venv install" in wf and "make check" in wf
     assert 'python-version: "3.12"' in wf and "contents: read" in wf
+
+
+def test_ci_actions_are_pinned_by_commit_sha_not_by_movable_tag() -> None:
+    wf = (ROOT / ".github" / "workflows" / "check.yml").read_text()
+    uses = re.findall(r"^\s*-?\s*uses:\s*(\S+)", wf, flags=re.M)
+    assert uses, "el workflow debe usar acciones"
+    for ref in uses:
+        assert re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", ref), f"{ref}: fijar por SHA de 40 hex"
