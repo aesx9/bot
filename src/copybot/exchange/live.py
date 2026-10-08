@@ -27,7 +27,8 @@ import contextlib
 import logging
 import uuid
 from collections.abc import Callable, Iterator, Mapping
-from datetime import UTC, datetime
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from typing import Any
 
@@ -49,7 +50,14 @@ ZERO = Decimal(0)
 API = "/derivatives/api/v3"
 STOP_PREFIX = "cs-"  # cliOrdId de los stops de catástrofe del bot
 LIQUIDATION_SAFETY = Decimal("0.8")  # el stop debe saltar antes del 80 % del margen libre
-FUNDING_POLL_SECONDS = 300
+FUNDING_POLL_SECONDS = 300  # cada cuánto se lee el log de cuenta (funding y comisiones)
+FILLS_PAGE = 100  # /fills devuelve como mucho los 100 últimos; más antiguos, con lastFillTime
+FILLS_MAX_PAGES = 20
+LOG_PAGE = 50  # entradas del account-log por petición
+LOG_MAX_PAGES = 40
+LOG_INFO = ("funding rate change", "futures trade", "futures liquidation",
+            "futures partial liquidation")
+SEEN_MEMORY = 500  # ids recordados (fills y entradas del log) para no repetir
 
 # sendStatus.status que significan "no ejecutada, sin error del exchange"
 _NOT_FILLED = {"placed", "cancelled", "iocWouldNotExecute"}
@@ -88,6 +96,46 @@ def _executions(events: Any) -> tuple[Decimal, Decimal | None]:
     return filled, (notional / filled if filled else None)
 
 
+@dataclass
+class _Staged:
+    """Lo nuevo del libro, preparado y aún sin confirmar."""
+
+    fills: list[dict[str, Any]] = field(default_factory=list)
+    fees: list[dict[str, Any]] = field(default_factory=list)
+    fill_ids: list[str] = field(default_factory=list)
+    fill_id_set: set[str] = field(default_factory=set)
+    log_uids: list[str] = field(default_factory=list)
+    log_uid_set: set[str] = field(default_factory=set)
+    cursor_ms: int | None = None
+    polled_log_at: datetime | None = None
+
+
+def _parse_ts(value: Any) -> datetime:
+    ts = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if ts.tzinfo is None:
+        raise ValueError("fecha sin zona horaria")
+    return ts
+
+
+def _iso_ms(ts: datetime) -> str:
+    return ts.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _log_ms(e: Mapping[str, Any]) -> int | None:
+    try:
+        return int(_parse_ts(e["date"]).timestamp() * 1000)
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _log_uid(e: Mapping[str, Any]) -> str:
+    """Identificador de una entrada del log: booking_uid o, si falta, una clave compuesta."""
+    uid = str(e.get("booking_uid") or "")
+    if uid:
+        return uid
+    return "|".join(str(e.get(k)) for k in ("date", "info", "contract", "fee", "new_balance"))
+
+
 class LiveExchange:
     mode = "live"
 
@@ -101,11 +149,12 @@ class LiveExchange:
         self._c = client
         self._state = state
         self._now = now
-        self._last_funding_poll: datetime | None = None
+        self._last_log_poll: datetime | None = None
         self._positions: dict[str, Decimal] = {}  # última lectura, para el signo del funding
         self.alerts: list[str] = []  # avisos para el motor (se vacían con drain_alerts)
-        self.ledger_fills: list[dict[str, Any]] = []  # fills reales nuevos (kraken_fills.csv)
-        self.ledger_fees: list[dict[str, Any]] = []  # comisiones del log (fees.csv)
+        # Libro en dos fases: collect_funding() PREPARA lo nuevo sin tocar el estado; el motor
+        # lo escribe en los CSV y solo entonces commit_ledger() avanza cursores e ids vistos.
+        self._staged: _Staged | None = None
 
     # --- cuenta ---
 
@@ -150,9 +199,10 @@ class LiveExchange:
         return out
 
     def drain_ledger(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        fills, fees = self.ledger_fills, self.ledger_fees
-        self.ledger_fills, self.ledger_fees = [], []
-        return fills, fees
+        """Fills y comisiones preparados (NO se vacían: hasta commit_ledger() siguen
+        pendientes, de modo que un fallo al escribir el CSV no pierde nada)."""
+        st = self._staged
+        return (list(st.fills), list(st.fees)) if st else ([], [])
 
     # --- órdenes ---
 
@@ -221,58 +271,123 @@ class LiveExchange:
         descartarían como "anteriores" los fills de las primeras órdenes del propio bot."""
         if self._state.live_funding_cursor_ms is not None:
             return
-        await self._poll_fills()  # sin cursor: marca como vistos los fills existentes
-        self._state.live_funding_cursor_ms = int(now.timestamp() * 1000)
+        staged = _Staged()
+        await self._stage_fills(staged, baseline=True)
+        staged.cursor_ms = int(now.timestamp() * 1000)
+        self._staged = staged
+        self.commit_ledger()
 
     async def collect_funding(self, now: datetime) -> list[FundingEvent]:
-        """Cada FUNDING_POLL_SECONDS: funding y comisiones del log de cuenta y fills
-        nuevos de /fills. Los fills y comisiones quedan en ledger_fills/ledger_fees."""
-        if (self._last_funding_poll is not None
-                and (now - self._last_funding_poll).total_seconds() < FUNDING_POLL_SECONDS):
-            return []
-        self._last_funding_poll = now
-        await self._poll_fills()
-        cursor = self._state.live_funding_cursor_ms
-        if cursor is None:  # primer arranque: no se importa el histórico anterior
-            self._state.live_funding_cursor_ms = int(now.timestamp() * 1000)
-            return []
-        payload = await self._c.request("GET", "/api/history/v3/account-log", [
-            ("since", str(cursor)), ("sort", "asc"), ("count", "50"),
-            ("info", "funding rate change"), ("info", "futures trade"),
-            ("info", "futures liquidation"), ("info", "futures partial liquidation"),
-        ])
-        logs = payload.get("logs") or []
-        if not isinstance(logs, list):
-            raise ExchangeError("account-log: se esperaba una lista")
+        """Prepara lo nuevo del libro: fills (en cada llamada, con paginación) y, cada
+        FUNDING_POLL_SECONDS, funding y comisiones del log de cuenta.
+
+        NO avanza cursores ni ids vistos: el motor escribe primero los CSV (fills y
+        comisiones con drain_ledger(), eventos de funding con el valor devuelto) y después
+        llama a commit_ledger(). Si algo falla en medio, la siguiente llamada vuelve a
+        encontrar lo mismo y los CSV no duplican (son idempotentes por id)."""
+        if self._state.live_funding_cursor_ms is None:
+            await self.prepare_ledger(now)
+        staged = _Staged()
+        await self._stage_fills(staged, baseline=False)
         events: list[FundingEvent] = []
-        for e in logs:
-            if not isinstance(e, dict):
-                continue
-            try:
-                ts = datetime.fromisoformat(str(e["date"]).replace("Z", "+00:00"))
-                if ts.tzinfo is None:
-                    raise ValueError("fecha sin zona horaria")
-                cursor = max(cursor, int(ts.timestamp() * 1000) + 1)
-                symbol = str(e.get("contract") or "").upper()
-                if e.get("info") == "funding rate change":
-                    events.append(self._funding_event(e, ts, symbol))
-                elif e.get("fee") is not None:
-                    self.ledger_fees.append({
-                        "timestamp": ts, "symbol": symbol, "fee": _dec(e["fee"], "comisión"),
-                        "currency": str(e.get("collateral") or e.get("asset") or "").upper(),
-                        "info": str(e.get("info")), "booking_uid": str(e.get("booking_uid") or ""),
-                    })
-            except (KeyError, TypeError, AttributeError, ValueError, ArithmeticError,
-                    ExchangeError) as exc:
-                # Se salta esa entrada (si no, el cursor no avanzaría nunca) y se avisa:
-                # el libro fiscal tendría un hueco que hay que revisar a mano.
-                self.alerts.append(
-                    f"account-log: entrada ilegible ({type(exc).__name__}) "
-                    f"[date={e.get('date')!r}, info={e.get('info')!r}, "
-                    f"booking_uid={e.get('booking_uid')!r}]: no se importa; revísala a mano"
-                )
-        self._state.live_funding_cursor_ms = cursor
+        if (self._last_log_poll is None
+                or (now - self._last_log_poll).total_seconds() >= FUNDING_POLL_SECONDS):
+            events = await self._stage_account_log(staged)
+            staged.polled_log_at = now
+        self._staged = staged
         return events
+
+    def commit_ledger(self) -> None:
+        """Confirma lo preparado, DESPUÉS de haberlo escrito en los CSV."""
+        st = self._staged
+        if st is None:
+            return
+        self._state.fills_seen = (self._state.fills_seen + st.fill_ids)[-SEEN_MEMORY:]
+        self._state.log_seen = (self._state.log_seen + st.log_uids)[-SEEN_MEMORY:]
+        if st.cursor_ms is not None:
+            current = self._state.live_funding_cursor_ms
+            self._state.live_funding_cursor_ms = (
+                st.cursor_ms if current is None else max(current, st.cursor_ms))
+        if st.polled_log_at is not None:
+            self._last_log_poll = st.polled_log_at
+        self._staged = None
+
+    # -- account-log (funding y comisiones) --
+
+    async def _stage_account_log(self, staged: _Staged) -> list[FundingEvent]:
+        cursor = self._state.live_funding_cursor_ms
+        assert cursor is not None
+        seen = set(self._state.log_seen)
+        events: list[FundingEvent] = []
+        # since-1: sea inclusivo o exclusivo en el exchange, se vuelven a pedir las entradas
+        # del milisegundo del cursor (las ya vistas se descartan por booking_uid); así no se
+        # pierde ningún evento que comparta milisegundo con el último procesado
+        since = cursor - 1
+        for _ in range(LOG_MAX_PAGES):
+            payload = await self._c.request("GET", "/api/history/v3/account-log", [
+                ("since", str(since)), ("sort", "asc"), ("count", str(LOG_PAGE)),
+                *(("info", i) for i in LOG_INFO),
+            ])
+            logs = payload.get("logs") or []
+            if not isinstance(logs, list):
+                raise ExchangeError("account-log: se esperaba una lista")
+            last_ms: int | None = None
+            for e in logs:
+                if not isinstance(e, dict):
+                    continue
+                uid = _log_uid(e)
+                ms = _log_ms(e)
+                if ms is not None:
+                    last_ms = ms if last_ms is None else max(last_ms, ms)
+                if uid in seen or uid in staged.log_uid_set:
+                    continue
+                staged.log_uid_set.add(uid)
+                staged.log_uids.append(uid)
+                if ms is not None:
+                    staged.cursor_ms = ms if staged.cursor_ms is None else max(
+                        staged.cursor_ms, ms)
+                try:
+                    self._process_log_entry(e, staged, events)
+                except (KeyError, TypeError, AttributeError, ValueError, ArithmeticError,
+                        ExchangeError) as exc:
+                    # Se salta esa entrada (si no, el cursor no avanzaría nunca) y se avisa:
+                    # el libro fiscal tendría un hueco que hay que revisar a mano.
+                    self.alerts.append(
+                        f"account-log: entrada ilegible ({type(exc).__name__}) "
+                        f"[date={e.get('date')!r}, info={e.get('info')!r}, "
+                        f"booking_uid={e.get('booking_uid')!r}]: no se importa; revísala a mano")
+            if len(logs) < LOG_PAGE or last_ms is None:
+                return events
+            # Siguiente página: desde (último ms - 1), de modo que lo que comparta milisegundo
+            # con la última entrada y no cupo vuelva a salir (las ya vistas se descartan).
+            # Si así no se avanza (una página entera en el mismo milisegundo) no queda más
+            # remedio que saltar: se prueba con el propio ms y después con el siguiente, y se
+            # avisa de que puede faltar alguna entrada en vez de repetir la misma página.
+            nxt = last_ms - 1
+            if nxt <= since:
+                nxt = last_ms if last_ms > since else last_ms + 1
+                self.alerts.append(
+                    f"account-log: {LOG_PAGE} entradas o más con el mismo milisegundo "
+                    f"({last_ms}): puede faltar alguna; revisa fees.csv y funding.csv")
+            since = nxt
+        self.alerts.append(f"account-log: más de {LOG_MAX_PAGES} páginas pendientes; "
+                           "el resto se importará en el siguiente sondeo")
+        return events
+
+    def _process_log_entry(self, e: Mapping[str, Any], staged: _Staged,
+                           events: list[FundingEvent]) -> None:
+        ts = datetime.fromisoformat(str(e["date"]).replace("Z", "+00:00"))
+        if ts.tzinfo is None:
+            raise ValueError("fecha sin zona horaria")
+        symbol = str(e.get("contract") or "").upper()
+        if e.get("info") == "funding rate change":
+            events.append(self._funding_event(e, ts, symbol))
+        elif e.get("fee") is not None:
+            staged.fees.append({
+                "timestamp": ts, "symbol": symbol, "fee": _dec(e["fee"], "comisión"),
+                "currency": str(e.get("collateral") or e.get("asset") or "").upper(),
+                "info": str(e.get("info")), "booking_uid": str(e.get("booking_uid") or ""),
+            })
 
     def _funding_event(self, e: Mapping[str, Any], ts: datetime, symbol: str) -> FundingEvent:
         rate = _dec(e.get("funding_rate") or 0, "funding")
@@ -283,7 +398,7 @@ class LiveExchange:
             amount = realized
         position = self._positions.get(symbol, ZERO)
         self._check_funding_sign(symbol, position, rate, amount, realized)
-        return FundingEvent(ts, symbol, position, rate, amount)
+        return FundingEvent(ts, symbol, position, rate, amount, booking_uid=_log_uid(e))
 
     def _check_funding_sign(self, symbol: str, position: Decimal, rate: Decimal,
                             amount: Decimal, realized: Decimal) -> None:
@@ -307,48 +422,81 @@ class LiveExchange:
             log.warning("signo del funding real verificado con %s (tasa %s, importe %s)",
                         symbol, rate, amount)
 
-    async def _poll_fills(self) -> None:
-        payload = await self._c.request("GET", f"{API}/fills")
-        first_run = self._state.live_funding_cursor_ms is None
-        seen = set(self._state.fills_seen)
-        new_ids: list[str] = []
+    # -- /fills --
+
+    async def _fetch_fills(self, last_fill_time: str | None) -> list[dict[str, Any]]:
+        payload = await self._c.request(
+            "GET", f"{API}/fills", [("lastFillTime", last_fill_time)] if last_fill_time else None)
         fills = payload.get("fills") or []
         if not isinstance(fills, list):
             raise ExchangeError("fills: se esperaba una lista")
-        rows = sorted((f for f in fills if isinstance(f, dict)),
-                      key=lambda f: str(f.get("fillTime")))
-        for f in rows:
-            fid = str(f.get("fill_id") or "")
-            if not fid or fid in seen:
-                continue
-            if first_run:  # fills anteriores al primer arranque live: no son del bot
-                seen.add(fid)
-                new_ids.append(fid)
-                continue
-            cli = str(f.get("cliOrdId") or "")
-            origin = ("liquidación" if "iquidation" in str(f.get("fillType"))
-                      else "stop_catastrofe" if cli.startswith(STOP_PREFIX)
-                      else "bot" if cli else "manual")
-            try:
-                row = {
-                    "timestamp": datetime.fromisoformat(
-                        str(f["fillTime"]).replace("Z", "+00:00")),
-                    "symbol": str(f.get("symbol")).upper(), "side": str(f.get("side")),
-                    "size": _dec(f.get("size"), "fill"), "price": _dec(f.get("price"), "fill"),
-                    "fill_type": str(f.get("fillType")), "cli_ord_id": cli, "fill_id": fid,
-                    "order_id": str(f.get("order_id") or ""), "origin": origin,
-                }
-            except (KeyError, TypeError, AttributeError, ValueError, ArithmeticError,
-                    ExchangeError) as exc:
+        return [f for f in fills if isinstance(f, dict)]
+
+    async def _stage_fills(self, staged: _Staged, *, baseline: bool) -> None:
+        """Fills nuevos, de los más recientes a los más antiguos hasta topar con uno ya visto.
+
+        /fills devuelve como mucho FILLS_PAGE: si una página llega llena y toda es nueva,
+        hay más antiguos y se pide la siguiente con lastFillTime = (el más antiguo + 1 ms),
+        de modo que los fills del mismo milisegundo en el borde de página vuelven a salir
+        (se descartan por fill_id). baseline=True solo marca como vistos los existentes."""
+        seen = set(self._state.fills_seen)
+        param: str | None = None
+        for _ in range(FILLS_MAX_PAGES):
+            page = await self._fetch_fills(param)
+            page_has_seen = False
+            times: list[datetime] = []
+            for f in sorted(page, key=lambda f: str(f.get("fillTime"))):
+                fid = str(f.get("fill_id") or "")
+                if not fid:
+                    continue
+                with contextlib.suppress(KeyError, TypeError, ValueError, AttributeError):
+                    times.append(_parse_ts(f["fillTime"]))
+                if fid in seen:
+                    page_has_seen = True
+                    continue
+                if fid in staged.fill_id_set:
+                    continue  # ya salió en la página anterior (solapamiento del borde)
+                if baseline:  # fills anteriores al primer arranque live: no son del bot
+                    staged.fill_id_set.add(fid)
+                    staged.fill_ids.append(fid)
+                    continue
+                row = self._fill_row(f, fid)
+                if row is None:
+                    continue  # sin marcarlo como visto: se reintenta en el siguiente sondeo
+                staged.fill_id_set.add(fid)
+                staged.fill_ids.append(fid)
+                staged.fills.append(row)
+            if baseline or len(page) < FILLS_PAGE or page_has_seen or not times:
+                return
+            nxt = _iso_ms(min(times) + timedelta(milliseconds=1))
+            if nxt == param:
                 self.alerts.append(
-                    f"fills: fill ilegible ({type(exc).__name__}) [fill_id={fid!r}]: no se "
-                    "importa al libro fiscal; revísalo a mano")
-                continue  # sin marcarlo como visto: se reintenta en el siguiente sondeo
-            seen.add(fid)
-            new_ids.append(fid)
-            self.ledger_fills.append(row)
-        # /fills solo devuelve los 100 últimos: basta con recordar algo más que eso
-        self._state.fills_seen = (self._state.fills_seen + new_ids)[-500:]
+                    f"fills: {FILLS_PAGE} fills o más en el mismo milisegundo ({nxt}): puede "
+                    "faltar alguno en kraken_fills.csv; concilia con la web de Kraken")
+                return
+            param = nxt
+        self.alerts.append(f"fills: más de {FILLS_MAX_PAGES} páginas pendientes; el resto se "
+                           "importará en el siguiente sondeo")
+
+    def _fill_row(self, f: Mapping[str, Any], fid: str) -> dict[str, Any] | None:
+        cli = str(f.get("cliOrdId") or "")
+        origin = ("liquidación" if "iquidation" in str(f.get("fillType"))
+                  else "stop_catastrofe" if cli.startswith(STOP_PREFIX)
+                  else "bot" if cli else "manual")
+        try:
+            return {
+                "timestamp": _parse_ts(f["fillTime"]),
+                "symbol": str(f.get("symbol")).upper(), "side": str(f.get("side")),
+                "size": _dec(f.get("size"), "fill"), "price": _dec(f.get("price"), "fill"),
+                "fill_type": str(f.get("fillType")), "cli_ord_id": cli, "fill_id": fid,
+                "order_id": str(f.get("order_id") or ""), "origin": origin,
+            }
+        except (KeyError, TypeError, AttributeError, ValueError, ArithmeticError,
+                ExchangeError) as exc:
+            self.alerts.append(
+                f"fills: fill ilegible ({type(exc).__name__}) [fill_id={fid!r}]: no se "
+                "importa al libro fiscal; revísalo a mano")
+            return None
 
     # --- stops de catástrofe ---
 

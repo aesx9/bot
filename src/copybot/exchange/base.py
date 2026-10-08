@@ -52,6 +52,7 @@ class FundingEvent:
     position: Decimal  # tamaño con signo al aplicarse
     rate: Decimal  # absoluto, USD por unidad
     amount_usd: Decimal  # + cobrado, - pagado
+    booking_uid: str = ""  # id del apunte en el log de cuenta (live): permite no duplicar
 
 
 class Exchange(Protocol):

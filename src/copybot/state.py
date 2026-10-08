@@ -71,6 +71,7 @@ class BotState:
     live_confirmation: dict[str, Any] | None = None
     funding_sign_verified: bool = False  # el signo del funding real ya cuadró una vez
     fills_seen: list[str] = field(default_factory=list)  # fill_id ya registrados (live)
+    log_seen: list[str] = field(default_factory=list)  # booking_uid del log de cuenta ya vistos
     paper: dict[str, Any] | None = None  # cuenta simulada (PaperAccount.to_dict)
 
     def bind_mode(self, mode: str) -> None:
@@ -108,6 +109,7 @@ class BotState:
             "live_confirmation": self.live_confirmation,
             "funding_sign_verified": self.funding_sign_verified,
             "fills_seen": self.fills_seen,
+            "log_seen": self.log_seen,
             "paper": self.paper,
         }
 
@@ -140,6 +142,7 @@ class BotState:
             live_confirmation=d.get("live_confirmation"),
             funding_sign_verified=bool(d.get("funding_sign_verified", False)),
             fills_seen=list(d.get("fills_seen", [])),
+            log_seen=list(d.get("log_seen", [])),
             paper=d.get("paper"),
         )
 

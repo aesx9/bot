@@ -136,18 +136,20 @@ def log_entry(ms: int, amount_old: str, amount_new: str, contract: str = "pf_xbt
     return {"_ms": ms, "date": datetime.fromtimestamp(ms / 1000, tz=UTC).isoformat(),
             "info": "funding rate change", "asset": "usd", "contract": contract,
             "old_balance": amount_old, "new_balance": amount_new,
-            "realized_funding": "0", "funding_rate": "0.5", "booking_uid": "b", "id": 1}
+            "realized_funding": "0", "funding_rate": "0.5", "booking_uid": f"b{ms}", "id": 1}
 
 
 async def test_funding_from_account_log(env: Env) -> None:
     start = int(NOW.timestamp() * 1000)
     assert await env.live.collect_funding(NOW) == []  # primer arranque: sin histórico
+    env.live.commit_ledger()  # el motor confirma tras escribir los CSV
     assert env.state.live_funding_cursor_ms == start
     env.kraken.logs = [log_entry(start - 1000, "100", "90"),  # anterior: no se importa
                        log_entry(start + 1000, "100", "99.5"),
                        log_entry(start + 2000, "99.5", "99.7")]
     assert await env.live.collect_funding(NOW + timedelta(seconds=60)) == []  # limitado
     events = await env.live.collect_funding(NOW + timedelta(minutes=6))
+    env.live.commit_ledger()
     assert [(e.symbol, e.amount_usd) for e in events] == [(BTC, D("-0.5")), (BTC, D("0.2"))]
     query = [p for _, path, p in env.kraken.calls if "account-log" in path][-1]
     assert query["sort"] == "asc"
@@ -202,6 +204,7 @@ async def test_ledger_records_real_fills_and_fees_but_not_history(env: Env) -> N
     assert [(f["fill_id"], f["origin"]) for f in fills] == [
         ("f1", "bot"), ("stop", "stop_catastrofe"), ("liq", "liquidación")]
     assert [(f["symbol"], f["fee"], f["currency"]) for f in fees] == [(SOL, D("0.1"), "USD")]
+    env.live.commit_ledger()
     await env.live.collect_funding(NOW + timedelta(minutes=12))
     assert env.live.drain_ledger()[0] == []  # sin duplicados
 
@@ -308,9 +311,10 @@ async def test_malformed_account_log_entries_are_skipped_with_an_alert(env: Env)
     assert [e.amount_usd for e in events] == [D("-0.5")]
     alerts = env.live.drain_alerts()
     assert len(alerts) == 2 and all("account-log" in a for a in alerts)
+    env.live.commit_ledger()
     # el cursor avanzó más allá de las entradas ilegibles: no se atasca
     assert env.state.live_funding_cursor_ms is not None
-    assert env.state.live_funding_cursor_ms > start + 3000
+    assert env.state.live_funding_cursor_ms == start + 3000
 
 
 @pytest.mark.parametrize("breakage", ["no_symbol", "accounts_list", "fills_not_list"])
@@ -395,6 +399,11 @@ async def test_first_cycle_fills_reach_the_fiscal_ledger(env: Env, tmp_path: Pat
     rows = list(csv.DictReader((tmp_path / "kraken_fills.csv").open()))
     assert [(r["fill_id"], r["origen"], r["lado"]) for r in rows] == [("f1", "bot", "buy")]
     assert "viejo" in env.state.fills_seen  # lo anterior al bot solo se marca como visto
+    # M3: foto de las posiciones reales para que el export concilie el neto de los fills
+    snap = list(csv.DictReader((tmp_path / "positions.csv").open()))
+    real = await env.live.positions()
+    assert [(r["modo"], r["mercado"], D(r["tamano"])) for r in snap] == [
+        ("live", s, size) for s, size in real.items()] and SOL in real
 
 
 async def test_prepare_ledger_is_idempotent_and_runs_once(env: Env) -> None:

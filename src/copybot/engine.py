@@ -401,11 +401,12 @@ class Engine:
         results = execution.results
 
         after = await self._ex.positions()
+        positions_at = self._now()
         state.managed_symbols = {s for s in managed if after.get(s) or s in sized.targets}
         # Los stops van PRIMERO: un fallo posterior (funding, libro, capital) no puede dejar
         # una posición recién abierta sin protección
         await self._sync_protective_stops(after, markets)
-        await self._after_trading(snap.equity_usd)
+        await self._after_trading(snap.equity_usd, after, positions_at)
 
         paced = await self._track_pacing(execution.deferred)
         if paced is not None:
@@ -617,7 +618,8 @@ class Engine:
         for warning in await sync(managed, markets, self._catastrophe_pct()):
             await self._alert.alert(Level.CRITICAL, warning)
 
-    async def _after_trading(self, leader_equity: Decimal) -> None:
+    async def _after_trading(self, leader_equity: Decimal, positions: dict[str, Decimal],
+                             positions_at: datetime) -> None:
         now = self._now()
         for event in await self._ex.collect_funding(now):
             self._rec.funding(event, self._ex.mode)
@@ -628,6 +630,11 @@ class Engine:
                 self._rec.kraken_fill(f)
             for fee in fees:
                 self._rec.fee(fee)
+        # Los cursores solo avanzan cuando TODO lo anterior ya está en los CSV: si escribir
+        # falla, la siguiente lectura vuelve a traerlo (y los CSV no duplican por id)
+        commit_ledger = getattr(self._ex, "commit_ledger", None)
+        if commit_ledger is not None:
+            commit_ledger()
         drain_alerts = getattr(self._ex, "drain_alerts", None)
         if drain_alerts is not None:
             for text in drain_alerts():
@@ -635,6 +642,8 @@ class Engine:
         last = self.state.last_equity_record_at
         if last is None or now.timestamp() - last >= float(self.cfg.timing.equity_snapshot_seconds):
             self._rec.equity(now, self._ex.mode, await self._ex.equity_usd(), leader_equity)
+            if self._ex.mode == "live":  # foto de las posiciones reales para conciliar
+                self._rec.positions_snapshot(positions_at, self._ex.mode, positions)
             self.state.last_equity_record_at = now.timestamp()
 
     # --- bucle principal ---

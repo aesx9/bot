@@ -7,6 +7,7 @@ import base64
 import hashlib
 import hmac
 import json
+from datetime import datetime
 from decimal import Decimal
 from typing import Any
 from urllib.parse import parse_qsl
@@ -58,6 +59,13 @@ class FakeKraken:
         self.one_stop_per_symbol = False
         self.fill_fraction = Decimal(1)  # <1: la IOC se ejecuta solo en parte
         self.fail_paths: set[str] = set()  # rutas que responden 503 (inyección de fallos)
+        # Paginación como la del exchange: /fills da como mucho `fills_page` (los más
+        # recientes) y con lastFillTime los anteriores a esa hora (`fills_inclusive`: también
+        # los de esa hora exacta); el account-log respeta count/sort y `since` (inclusivo
+        # o no, según `log_since_inclusive`).
+        self.fills_page = 100
+        self.fills_inclusive = False
+        self.log_since_inclusive = True
 
     # --- utilidades ---
 
@@ -98,7 +106,7 @@ class FakeKraken:
         if path == "/derivatives/api/v3/openorders":
             return _ok(openOrders=self.open_orders)
         if path == "/derivatives/api/v3/fills":
-            return _ok(fills=self.fills)
+            return _ok(fills=self._fills_page(params.get("lastFillTime")))
         if path == "/derivatives/api/v3/orders/status":
             return _ok(orders=[])
         if path == "/derivatives/api/v3/cancelorder":
@@ -109,12 +117,27 @@ class FakeKraken:
             return self._send(params)
         if path == "/api/history/v3/account-log":
             since = int(params.get("since", "0"))
-            logs = [e for e in self.logs if e["_ms"] >= since]
+            logs = sorted((e for e in self.logs if (
+                e["_ms"] >= since if self.log_since_inclusive else e["_ms"] > since)),
+                key=lambda e: e["_ms"])
+            logs = logs[:int(params.get("count", len(logs)))]
             return httpx.Response(200, json={"accountUid": "x", "logs": [
                 {k: v for k, v in e.items() if k != "_ms"} for e in logs]})
         if path == "/api/auth/v1/api-keys/v3/check":
             return httpx.Response(200, json=self.key_check)
         return httpx.Response(404, json={"result": "error", "error": "notFound"})
+
+    def _fills_page(self, last_fill_time: str | None) -> list[dict[str, Any]]:
+        def when(f: dict[str, Any]) -> datetime:
+            return datetime.fromisoformat(str(f["fillTime"]).replace("Z", "+00:00"))
+
+        rows = list(self.fills)
+        if last_fill_time:
+            limit = datetime.fromisoformat(last_fill_time.replace("Z", "+00:00"))
+            rows = [f for f in rows if (when(f) <= limit if self.fills_inclusive
+                                        else when(f) < limit)]
+        rows.sort(key=when, reverse=True)  # los más recientes primero
+        return rows[:self.fills_page]
 
     def _send(self, p: dict[str, str]) -> httpx.Response:
         if p["orderType"] == "stp":

@@ -22,7 +22,7 @@ def fill(rec: CsvRecorder, t: datetime, side: str, size: str, price: str, origin
          sym: str = "PF_XBTUSD", fid: str = "") -> None:
     rec.kraken_fill({"timestamp": t, "symbol": sym, "side": side, "size": D(size),
                      "price": D(price), "fill_type": "taker", "origin": origin,
-                     "cli_ord_id": "", "fill_id": fid or f"{t.timestamp()}{side}",
+                     "cli_ord_id": "", "fill_id": fid or f"{sym}{t.timestamp()}{side}",
                      "order_id": "o"})
 
 
@@ -211,7 +211,7 @@ def test_failed_rate_lookup_leaves_no_partial_files_and_keeps_the_previous_expor
     out = data / "out"
     export(data, 2026, out, RATES)
     before = {p.name: p.read_bytes() for p in out.iterdir()}
-    assert len(before) == 3
+    assert len(before) == 4  # posiciones, funding, resumen y conciliación
     old_rates = ecb.parse_rates("TIME_PERIOD,OBS_VALUE\n2026-09-01,1.1650\n", "demasiado vieja")
     with pytest.raises(ecb.RateError):
         export(data, 2026, out, old_rates)  # no hay tipo en los 7 días anteriores
@@ -221,7 +221,10 @@ def test_failed_rate_lookup_leaves_no_partial_files_and_keeps_the_previous_expor
 def test_export_files_are_private(data: Path) -> None:
     import stat
 
-    for p in export(data, 2026, data / "out", RATES)[:3]:
+    export(data, 2026, data / "out", RATES)
+    files = sorted((data / "out").iterdir())
+    assert len(files) == 4
+    for p in files:
         assert stat.S_IMODE(p.stat().st_mode) == 0o600
 
 
@@ -239,3 +242,123 @@ def test_funding_at_a_direction_change_is_counted_once_and_by_the_open_position(
     paid = {r["direccion"]: D(r["funding_pagado_usd"]) for r in rows(pos)}
     # una sola vez, y en el corto, que es la posición abierta cuando se paga
     assert paid == {"largo": D("0.00"), "corto": D("3.00")}
+
+
+# --- M3: sin duplicados y conciliación con las posiciones reales de Kraken ---
+
+
+def duplicate_last_line(path: Path) -> None:
+    lines = path.read_text().splitlines()
+    path.write_text("\n".join([*lines, lines[-1]]) + "\n")
+
+
+def test_duplicated_fill_rows_are_counted_once(tmp_path: Path) -> None:
+    """PoC D: un fill repetido en kraken_fills.csv abría una posición fantasma al reconstruir."""
+    rec = CsvRecorder(tmp_path)
+    fill(rec, FRI, "buy", "1", "100", sym="PF_SOLUSD", fid="f1")
+    fill(rec, FRI + timedelta(hours=1), "sell", "1", "110", sym="PF_SOLUSD", fid="f2")
+    duplicate_last_line(tmp_path / "kraken_fills.csv")  # CSV de una versión anterior
+    pos, _, _, notes = export(tmp_path, 2026, tmp_path / "out", RATES)
+    [p] = rows(pos)
+    assert p["resultado_bruto_usd"] == "10.00"
+    assert any("fill_id" in n and "1 fila" in n for n in notes)
+    assert not any("posición abierta" in n for n in notes)
+
+
+def test_duplicated_fee_and_funding_rows_are_counted_once(tmp_path: Path) -> None:
+    rec = CsvRecorder(tmp_path)
+    fill(rec, FRI, "buy", "1", "100", sym="PF_SOLUSD", fid="f1")
+    fill(rec, FRI + timedelta(hours=2), "sell", "1", "110", sym="PF_SOLUSD", fid="f2")
+    rec.fee({"timestamp": FRI, "symbol": "PF_SOLUSD", "fee": D("0.5"), "currency": "USD",
+             "info": "futures trade", "booking_uid": "u1"})
+    rec.funding(FundingEvent(FRI + timedelta(hours=1), "PF_SOLUSD", D(1), D(1), D("-1.00"),
+                             booking_uid="u2"), "live")
+    duplicate_last_line(tmp_path / "fees.csv")
+    duplicate_last_line(tmp_path / "funding.csv")
+    pos, fund, _, notes = export(tmp_path, 2026, tmp_path / "out", RATES)
+    [p] = rows(pos)
+    assert (p["comisiones_usd"], p["funding_pagado_usd"]) == ("0.50", "1.00")
+    assert len(rows(fund)) == 1
+    assert sum("repetida" in n for n in notes) == 2
+
+
+def snapshot(rec: CsvRecorder, t: datetime, **positions: str) -> None:
+    rec.positions_snapshot(t, "live", {s: D(v) for s, v in positions.items()})
+
+
+def recon_rows(out: Path) -> list[dict[str, Any]]:
+    return rows(out / "fiscal_conciliacion_2026.csv")
+
+
+def test_reconciliation_passes_when_the_net_of_fills_matches_kraken(tmp_path: Path) -> None:
+    rec = CsvRecorder(tmp_path)
+    fill(rec, FRI, "buy", "1", "100", sym="PF_SOLUSD", fid="f1")
+    fill(rec, FRI + timedelta(hours=1), "sell", "1", "110", sym="PF_SOLUSD", fid="f2")
+    fill(rec, FRI + timedelta(hours=2), "buy", "0.5", "100", sym="PF_SOLUSD", fid="f3")
+    snapshot(rec, FRI + timedelta(minutes=30), PF_SOLUSD="1")
+    snapshot(rec, FRI + timedelta(hours=3), PF_SOLUSD="0.5")
+    _, _, _, notes = export(tmp_path, 2026, tmp_path / "out", RATES)
+    got = recon_rows(tmp_path / "out")
+    assert [(r["mercado"], r["estado"]) for r in got] == [
+        ("PF_SOLUSD", "cuadra"), ("PF_SOLUSD", "cuadra")]
+    assert not any("CONCILIACIÓN" in n for n in notes)
+
+
+def test_reconciliation_flags_a_missing_fill(tmp_path: Path) -> None:
+    """PoC D: si un fill se pierde, el neto de los fills y la posición de Kraken divergen y
+    las posiciones fiscales (tamaño, precios, resultado) salen mal sin ningún aviso."""
+    rec = CsvRecorder(tmp_path)
+    fill(rec, FRI, "buy", "1", "100", sym="PF_SOLUSD", fid="f1")
+    # (falta el fill de una segunda compra de 1 que sí ocurrió en Kraken)
+    snapshot(rec, FRI + timedelta(hours=3), PF_SOLUSD="2")
+    _, _, _, notes = export(tmp_path, 2026, tmp_path / "out", RATES)
+    [r] = recon_rows(tmp_path / "out")
+    assert (r["neto_fills"], r["posicion_kraken"], r["estado"]) == ("1", "2", "NO CUADRA")
+    assert D(r["diferencia"]) == -1
+    [n] = [n for n in notes if "CONCILIACIÓN" in n]
+    assert "NO CUADRA" in n and "PF_SOLUSD" in n
+
+
+def test_reconciliation_flags_a_position_with_no_fills_at_all(tmp_path: Path) -> None:
+    rec = CsvRecorder(tmp_path)
+    fill(rec, FRI, "buy", "1", "100", sym="PF_SOLUSD", fid="f1")
+    snapshot(rec, FRI + timedelta(hours=3), PF_SOLUSD="1", PF_ETHUSD="3")
+    _, _, _, notes = export(tmp_path, 2026, tmp_path / "out", RATES)
+    got = {r["mercado"]: r["estado"] for r in recon_rows(tmp_path / "out")}
+    assert got == {"PF_ETHUSD": "NO CUADRA", "PF_SOLUSD": "cuadra"}
+    assert any("PF_ETHUSD" in n and "NO CUADRA" in n for n in notes)
+
+
+def test_reconciliation_notes_earlier_mismatches_and_flat_accounts(tmp_path: Path) -> None:
+    rec = CsvRecorder(tmp_path)
+    fill(rec, FRI, "buy", "1", "100", sym="PF_SOLUSD", fid="f1")
+    fill(rec, FRI + timedelta(hours=2), "sell", "1", "110", sym="PF_SOLUSD", fid="f2")
+    snapshot(rec, FRI + timedelta(hours=1), PF_SOLUSD="2")  # no cuadraba entonces
+    snapshot(rec, FRI + timedelta(hours=3))  # cuenta plana: cuadra
+    _, _, _, notes = export(tmp_path, 2026, tmp_path / "out", RATES)
+    got = recon_rows(tmp_path / "out")
+    assert [(r["mercado"], r["estado"]) for r in got] == [
+        ("PF_SOLUSD", "NO CUADRA"), ("", "cuadra")]
+    assert any("anterior" in n and "no cuadraban" in n for n in notes)
+    assert not any("NO CUADRA en" in n for n in notes)  # la última foto sí cuadra
+
+
+def test_reconciliation_warns_when_there_are_fills_but_no_position_snapshots(
+        tmp_path: Path) -> None:
+    rec = CsvRecorder(tmp_path)
+    fill(rec, FRI, "buy", "1", "100", sym="PF_SOLUSD", fid="f1")
+    _, _, _, notes = export(tmp_path, 2026, tmp_path / "out", RATES)
+    assert recon_rows(tmp_path / "out") == []
+    assert any("no hay fotos" in n for n in notes)
+
+
+def test_position_snapshots_are_written_on_change_or_hourly(tmp_path: Path) -> None:
+    rec = CsvRecorder(tmp_path)
+    snapshot(rec, FRI, PF_SOLUSD="1")
+    snapshot(rec, FRI + timedelta(minutes=15), PF_SOLUSD="1")  # igual y reciente: no se repite
+    snapshot(rec, FRI + timedelta(minutes=30), PF_SOLUSD="2")  # cambia: sí
+    snapshot(rec, FRI + timedelta(hours=2), PF_SOLUSD="2")  # pasó más de una hora: sí
+    got = [(r["timestamp_utc"][11:16], r["mercado"], r["tamano"])
+           for r in rows(tmp_path / "positions.csv")]
+    assert got == [("15:00", "PF_SOLUSD", "1"), ("15:30", "PF_SOLUSD", "2"),
+                   ("17:00", "PF_SOLUSD", "2")]

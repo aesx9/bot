@@ -1,7 +1,9 @@
 """Registros CSV: trades.csv, funding.csv y equity.csv.
 
-- trades.csv es idempotente por cliOrdId: una orden se registra una sola vez aunque se
-  reconcilie de nuevo tras una caída.
+- Los CSV del libro son IDEMPOTENTES por identificador: trades.csv por cliOrdId,
+  kraken_fills.csv por fill_id, fees.csv y funding.csv por booking_uid. Si el proceso cae
+  entre escribir una fila y confirmar el cursor, la siguiente lectura vuelve a traerla y no
+  se duplica (un fill duplicado impediría cerrar una posición en el export fiscal).
 
 - Timestamps en UTC (ISO 8601). Importes como Decimal en texto exacto.
 - Cada fila lleva el modo (paper/live): los informes fiscales excluyen paper.
@@ -15,6 +17,7 @@ from __future__ import annotations
 import csv
 import io
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -32,7 +35,7 @@ TRADES_HEADER = (
 )
 FUNDING_HEADER = (
     "timestamp_utc", "modo", "mercado", "posicion", "tasa_usd_por_unidad",
-    "importe_usd", "pagado_usd", "cobrado_usd",
+    "importe_usd", "pagado_usd", "cobrado_usd", "booking_uid",
 )
 KRAKEN_FILLS_HEADER = (
     "timestamp_utc", "mercado", "lado", "tamano", "precio", "tipo_fill", "origen",
@@ -40,6 +43,17 @@ KRAKEN_FILLS_HEADER = (
 )
 FEES_HEADER = ("timestamp_utc", "mercado", "comision", "moneda", "concepto", "booking_uid")
 EQUITY_HEADER = ("timestamp_utc", "modo", "capital_propio_usd", "capital_lider_usd")
+# Posiciones reales del exchange en un instante (solo live): el export fiscal las concilia
+# con el neto de los fills. Cuenta sin posiciones = una fila con mercado vacío y tamaño 0.
+POSITIONS_HEADER = ("timestamp_utc", "modo", "mercado", "tamano")
+
+
+POSITIONS_REFRESH_SECONDS = 3600  # sin cambios, la foto se repite como mucho cada hora
+
+
+def fee_key(timestamp: object, symbol: object, fee: object, info: object, uid: object) -> str:
+    """Identidad de una comisión: su booking_uid o, si el log no lo trae, una clave compuesta."""
+    return str(uid) if uid else f"{timestamp}|{symbol}|{fee}|{info}"
 
 
 @dataclass(frozen=True)
@@ -81,21 +95,25 @@ def _fmt(v: object) -> str:
 class CsvRecorder:
     def __init__(self, directory: Path) -> None:
         self.dir = directory
-        self._trade_ids: set[str] | None = None  # cliOrdId ya registrados en trades.csv
+        self._keys: dict[str, set[str]] = {}  # claves ya escritas por fichero (carga perezosa)
+        self._last_positions: tuple[float, dict[str, Decimal]] | None = None
 
-    def _known_trades(self) -> set[str]:
-        """Órdenes ya escritas (se lee el fichero una vez): tras una caída entre escribir
-        la fila y guardar el estado, la reconciliación vuelve a ver esa orden y la
-        registraría dos veces."""
-        if self._trade_ids is None:
-            self._trade_ids = set()
-            path = self.dir / "trades.csv"
+    def _known(self, name: str, key_of: Callable[[dict[str, str]], str]) -> set[str]:
+        """Claves ya escritas en `name` (el fichero se lee una sola vez)."""
+        if name not in self._keys:
+            keys: set[str] = set()
+            path = self.dir / name
             if path.exists():
                 with path.open(newline="", encoding="utf-8") as fh:
-                    self._trade_ids = {r.get("cli_ord_id", "") for r in csv.DictReader(fh)}
-        return self._trade_ids
+                    keys = {key_of(r) for r in csv.DictReader(fh)}
+            self._keys[name] = keys
+        return self._keys[name]
 
     def _append(self, name: str, header: tuple[str, ...], row: tuple[object, ...]) -> None:
+        self._append_rows(name, header, [row])
+
+    def _append_rows(self, name: str, header: tuple[str, ...],
+                     rows: list[tuple[object, ...]]) -> None:
         self.dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         path = self.dir / name
         new = not path.exists()
@@ -103,7 +121,8 @@ class CsvRecorder:
         writer = csv.writer(buf, lineterminator="\n")
         if new:
             writer.writerow(header)
-        writer.writerow([redact(_fmt(v)) for v in row])
+        for row in rows:  # una sola escritura: o están todas las filas o ninguna
+            writer.writerow([redact(_fmt(v)) for v in row])
         fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
         try:
             os.write(fd, buf.getvalue().encode("utf-8"))
@@ -112,7 +131,7 @@ class CsvRecorder:
             os.close(fd)
 
     def trade(self, r: TradeRecord) -> None:
-        known = self._known_trades()
+        known = self._known("trades.csv", lambda r: r.get("cli_ord_id", ""))
         if r.cli_ord_id in known:
             return  # idempotente por cliOrdId
         self._append("trades.csv", TRADES_HEADER, (
@@ -123,25 +142,57 @@ class CsvRecorder:
         known.add(r.cli_ord_id)
 
     def funding(self, e: FundingEvent, mode: str) -> None:
+        known = self._known("funding.csv", lambda r: r.get("booking_uid", ""))
+        if e.booking_uid and e.booking_uid in known:
+            return  # idempotente por booking_uid (el funding de paper no lo trae)
         paid = -e.amount_usd if e.amount_usd < 0 else Decimal(0)
         received = e.amount_usd if e.amount_usd > 0 else Decimal(0)
         self._append("funding.csv", FUNDING_HEADER, (
             e.timestamp, mode, e.symbol, e.position, e.rate, e.amount_usd, paid, received,
+            e.booking_uid,
         ))
+        if e.booking_uid:
+            known.add(e.booking_uid)
 
     def kraken_fill(self, f: dict[str, Any]) -> None:
         """Fill REAL de Kraken (solo live): base del export fiscal. Incluye stops de
         catástrofe, liquidaciones y operaciones manuales, marcados en 'origen'."""
+        known = self._known("kraken_fills.csv", lambda r: r.get("fill_id", ""))
+        if f["fill_id"] in known:
+            return  # idempotente por fill_id
         self._append("kraken_fills.csv", KRAKEN_FILLS_HEADER, (
             f["timestamp"], f["symbol"], f["side"], f["size"], f["price"], f["fill_type"],
             f["origin"], f["cli_ord_id"], f["fill_id"], f["order_id"],
         ))
+        known.add(f["fill_id"])
 
     def fee(self, f: dict[str, Any]) -> None:
         """Comisión real del log de cuenta de Kraken (solo live)."""
+        known = self._known("fees.csv", lambda r: fee_key(
+            r.get("timestamp_utc"), r.get("mercado"), r.get("comision"), r.get("concepto"),
+            r.get("booking_uid")))
+        key = fee_key(_fmt(f["timestamp"]), f["symbol"], _fmt(f["fee"]), f["info"],
+                      f["booking_uid"])
+        if key in known:
+            return  # idempotente por booking_uid
         self._append("fees.csv", FEES_HEADER, (
             f["timestamp"], f["symbol"], f["fee"], f["currency"], f["info"], f["booking_uid"],
         ))
+        known.add(key)
 
     def equity(self, ts: datetime, mode: str, mine: Decimal, leader: Decimal | None) -> None:
         self._append("equity.csv", EQUITY_HEADER, (ts, mode, mine, leader))
+
+    def positions_snapshot(self, ts: datetime, mode: str, positions: dict[str, Decimal]) -> None:
+        """Posiciones reales del exchange en `ts` (todas las de la cuenta, con signo). Sin
+        cambios respecto a la última foto escrita, solo se repite cada hora: basta para que
+        el export detecte un fill que falte en el libro sin crecer sin límite."""
+        clean = {symbol: size for symbol, size in positions.items() if size}
+        last = self._last_positions
+        if last and last[1] == clean and ts.timestamp() - last[0] < POSITIONS_REFRESH_SECONDS:
+            return
+        rows: list[tuple[object, ...]] = [
+            (ts, mode, symbol, size) for symbol, size in sorted(clean.items())]
+        self._append_rows("positions.csv", POSITIONS_HEADER,
+                          rows or [(ts, mode, "", Decimal(0))])
+        self._last_positions = (ts.timestamp(), clean)

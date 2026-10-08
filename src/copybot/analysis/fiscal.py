@@ -12,6 +12,10 @@ Genera en el directorio de datos (o en --out):
 - fiscal_resumen_<año>.csv: subtotales por origen de cierre de la posición
   (bot, stop_catastrofe, liquidación, manual) y total; más el funding total del
   año según fiscal_funding.
+- fiscal_conciliacion_<año>.csv: por cada foto de las posiciones reales de Kraken
+  (positions.csv), el neto de los fills hasta ese instante frente a la posición que
+  tenía la cuenta. Si no cuadra falta (o sobra) algún fill en kraken_fills.csv y el
+  resultado de las posiciones no es fiable: el export lo avisa.
 
 Reglas:
 - Solo operaciones REALES: las fuentes son kraken_fills.csv y fees.csv (que
@@ -30,6 +34,8 @@ Reglas:
   columna "origenes" lista todos los que intervinieron.
 - Comisiones: las del log de cuenta de Kraken del mismo mercado entre la
   apertura y el cierre de la posición.
+- Sin duplicados: un fill se cuenta una sola vez por fill_id, y una comisión o un
+  funding una sola vez por booking_uid, aunque el CSV los traiga repetidos.
 Este fichero es una ayuda para la declaración, no asesoramiento fiscal.
 """
 
@@ -40,7 +46,7 @@ import csv
 import os
 import sys
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
@@ -49,6 +55,7 @@ from pathlib import Path
 from copybot.analysis import ecb
 from copybot.analysis.positions import (
     ZERO,
+    Fill,
     Position,
     fills_from_rows,
     madrid,
@@ -56,6 +63,7 @@ from copybot.analysis.positions import (
     reconstruct,
     ts,
 )
+from copybot.records import fee_key
 
 ORIGINS = ("bot", "stop_catastrofe", "liquidación", "manual")
 POSITIONS_HEADER = (
@@ -76,6 +84,7 @@ FUNDING_HEADER = (
     "timestamp_utc", "mercado", "importe_usd", "pagado_usd", "cobrado_usd",
     "fecha_tipo_bce", "tipo_eurusd_bce", "pagado_eur", "cobrado_eur", "fuente_tipo_cambio",
 )
+RECON_HEADER = ("foto_utc", "mercado", "neto_fills", "posicion_kraken", "diferencia", "estado")
 WINDOW = timedelta(seconds=2)  # margen de reloj entre fills y apuntes del log
 CENT = Decimal("0.01")
 
@@ -143,17 +152,117 @@ class Amounts:
             setattr(self, name, getattr(self, name) + getattr(o, name))
 
 
-def load_live_data(data_dir: Path) -> tuple[list[Position], dict[str, Position],
-                                              list[Fee], list[Funding]]:
-    fills = fills_from_rows(read_rows(data_dir / "kraken_fills.csv"), price_key="precio",
-                            origin_key="origen")
+@dataclass
+class ReconRow:
+    """Una foto de las posiciones de Kraken frente al neto de los fills hasta ese instante."""
+
+    snapshot: datetime
+    symbol: str  # "" = cuenta sin posiciones ni neto
+    net_fills: Decimal = ZERO
+    exchange: Decimal = ZERO
+
+    @property
+    def diff(self) -> Decimal:
+        return self.net_fills - self.exchange
+
+    @property
+    def ok(self) -> bool:
+        return self.diff == 0
+
+
+@dataclass
+class LiveData:
+    closed: list[Position]
+    open_: dict[str, Position]
+    fees: list[Fee]
+    funding: list[Funding]
+    fills: list[Fill]
+    snapshots: list[tuple[datetime, dict[str, Decimal]]]
+    notes: list[str] = field(default_factory=list)
+
+
+def _unique(rows: list[dict[str, str]], key: Callable[[dict[str, str]], str | None], what: str,
+            notes: list[str]) -> list[dict[str, str]]:
+    """Filas sin repetir la clave (la primera gana); avisa de cuántas sobraban."""
+    seen: set[str] = set()
+    out: list[dict[str, str]] = []
+    dups = 0
+    for r in rows:
+        k = key(r)
+        if k:
+            if k in seen:
+                dups += 1
+                continue
+            seen.add(k)
+        out.append(r)
+    if dups:
+        notes.append(f"{what}: {dups} fila(s) repetida(s) ignorada(s); cada una cuenta una vez")
+    return out
+
+
+def load_live_data(data_dir: Path) -> LiveData:
+    notes: list[str] = []
+    fill_rows = _unique(read_rows(data_dir / "kraken_fills.csv"), lambda r: r.get("fill_id"),
+                        "kraken_fills.csv (por fill_id)", notes)
+    fills = list(fills_from_rows(fill_rows, price_key="precio", origin_key="origen"))
     closed, open_ = reconstruct(fills)
+    fee_rows = _unique(
+        read_rows(data_dir / "fees.csv"),
+        lambda r: fee_key(r.get("timestamp_utc"), r.get("mercado"), r.get("comision"),
+                          r.get("concepto"), r.get("booking_uid")),
+        "fees.csv (por booking_uid)", notes)
     fees = [Fee(ts(r["timestamp_utc"]), r["mercado"], Decimal(r["comision"]),
-                (r.get("moneda") or "USD").upper())
-            for r in read_rows(data_dir / "fees.csv")]
+                (r.get("moneda") or "USD").upper()) for r in fee_rows]
+    live_funding = _unique([r for r in read_rows(data_dir / "funding.csv")
+                            if r.get("modo") == "live"], lambda r: r.get("booking_uid"),
+                           "funding.csv (por booking_uid)", notes)
     funding = [Funding(ts(r["timestamp_utc"]), r["mercado"], Decimal(r["importe_usd"]))
-               for r in read_rows(data_dir / "funding.csv") if r.get("modo") == "live"]
-    return closed, open_, fees, funding
+               for r in live_funding]
+    by_time: dict[str, dict[str, Decimal]] = {}
+    for r in read_rows(data_dir / "positions.csv"):
+        if r.get("modo") != "live":
+            continue
+        snap = by_time.setdefault(r["timestamp_utc"], {})
+        if r.get("mercado"):
+            snap[r["mercado"]] = Decimal(r["tamano"])
+    snapshots = sorted(((ts(t), snap) for t, snap in by_time.items()), key=lambda s: s[0])
+    return LiveData(closed, open_, fees, funding, fills, snapshots, notes)
+
+
+def reconcile(fills: list[Fill], snapshots: list[tuple[datetime, dict[str, Decimal]]]
+              ) -> list[ReconRow]:
+    """Neto de los fills (acumulado desde el primero) frente a cada foto de posiciones."""
+    ordered = sorted(fills, key=lambda f: f.timestamp)
+    net: dict[str, Decimal] = {}
+    out: list[ReconRow] = []
+    i = 0
+    for when, positions in snapshots:
+        while i < len(ordered) and ordered[i].timestamp <= when:
+            net[ordered[i].symbol] = net.get(ordered[i].symbol, ZERO) + ordered[i].signed
+            i += 1
+        symbols = sorted(set(positions) | {s for s, v in net.items() if v})
+        if not symbols:
+            out.append(ReconRow(when, ""))
+        out += [ReconRow(when, s, net.get(s, ZERO), positions.get(s, ZERO)) for s in symbols]
+    return out
+
+
+def reconciliation_notes(rows: list[ReconRow], year: int, has_fills: bool) -> list[str]:
+    if not rows:
+        return ([f"CONCILIACIÓN: no hay fotos de las posiciones de Kraken de {year} "
+                 "(positions.csv): no se puede comprobar que kraken_fills.csv esté completo"]
+                if has_fills else [])
+    last = max(r.snapshot for r in rows)
+    notes = [
+        f"CONCILIACIÓN: NO CUADRA en {r.symbol}: neto de fills {r.net_fills}, posición en "
+        f"Kraken {r.exchange} (foto {r.snapshot.isoformat()}); falta o sobra algún fill en "
+        "kraken_fills.csv y el resultado de las posiciones de ese mercado no es fiable"
+        for r in rows if r.snapshot == last and not r.ok]
+    earlier = sorted({r.snapshot for r in rows if r.snapshot != last and not r.ok})
+    if earlier:
+        notes.append(f"CONCILIACIÓN: {len(earlier)} foto(s) anterior(es) no cuadraban (la "
+                     f"primera, {earlier[0].isoformat()}): revisa fiscal_conciliacion_{year}.csv")
+    return notes
 
 
 def assign(closed: list[Position], fees: list[Fee], funding: list[Funding]) -> list[FiscalRow]:
@@ -287,14 +396,27 @@ def write_funding(path: Path, funding: list[Funding], rates: ecb.RateTable) -> N
             ])
 
 
+def write_reconciliation(path: Path, rows: list[ReconRow]) -> None:
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(RECON_HEADER)
+        for r in rows:
+            w.writerow([r.snapshot.isoformat(), r.symbol, r.net_fills, r.exchange, r.diff,
+                        "cuadra" if r.ok else "NO CUADRA"])
+
+
 def export(data_dir: Path, year: int, out_dir: Path,
            rates_loader: ecb.RateTable | None = None) -> tuple[Path, Path, Path, list[str]]:
-    closed, open_, fees, funding = load_live_data(data_dir)
-    rows = assign(closed, fees, funding)
+    data = load_live_data(data_dir)
+    funding = data.funding
+    rows = assign(data.closed, data.fees, funding)
     rows = [r for r in rows if r.position.closed_at and madrid(r.position.closed_at).year == year]
     year_funding = [f for f in funding if madrid(f.timestamp).year == year]
-    notes = [f"posición abierta en {p.symbol} desde {p.opened_at.isoformat()}: no se declara "
-             "hasta que se cierre" for p in open_.values()]
+    notes = list(data.notes)
+    notes += [f"posición abierta en {p.symbol} desde {p.opened_at.isoformat()}: no se declara "
+              "hasta que se cierre" for p in data.open_.values()]
+    recon = reconcile(data.fills, [s for s in data.snapshots if madrid(s[0]).year == year])
+    notes += reconciliation_notes(recon, year, bool(data.fills))
     days = [local_date(r.position.closed_at) for r in rows if r.position.closed_at]
     days += [local_date(f.timestamp) for f in year_funding]
     days += [local_date(f.timestamp) for r in rows for f in r.fees]
@@ -305,6 +427,7 @@ def export(data_dir: Path, year: int, out_dir: Path,
     pos_path = out_dir / f"fiscal_posiciones_{year}.csv"
     fund_path = out_dir / f"fiscal_funding_{year}.csv"
     sum_path = out_dir / f"fiscal_resumen_{year}.csv"
+    recon_path = out_dir / f"fiscal_conciliacion_{year}.csv"
     # Los tres ficheros se generan primero aparte: si falta un tipo del BCE a mitad de camino
     # no queda ningún fichero a medias ni una mezcla de ficheros nuevos y viejos.
     with tempfile.TemporaryDirectory(dir=out_dir, prefix=".fiscal.") as tmp:
@@ -312,7 +435,8 @@ def export(data_dir: Path, year: int, out_dir: Path,
         write_positions(staging / pos_path.name, rows, rates)
         write_funding(staging / fund_path.name, year_funding, rates)
         write_summary(staging / sum_path.name, summarize(rows, year_funding, rates), rates)
-        for final in (pos_path, fund_path, sum_path):
+        write_reconciliation(staging / recon_path.name, recon)
+        for final in (pos_path, fund_path, sum_path, recon_path):
             (staging / final.name).chmod(0o600)  # datos personales de tributación
             os.replace(staging / final.name, final)
     return pos_path, fund_path, sum_path, notes
@@ -336,6 +460,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"error con los tipos del BCE: {exc}", file=sys.stderr)
         return 1
     print(f"Escrito {pos}\nEscrito {fund}\nEscrito {summary}")
+    print(f"Escrito {summary.with_name(f'fiscal_conciliacion_{args.year}.csv')}")
     for n in notes:
         print(f"Aviso: {n}")
     print("Solo incluye operaciones reales (live). Revisa los ficheros con tu asesor fiscal.")
