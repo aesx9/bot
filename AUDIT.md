@@ -32,6 +32,18 @@
 - **B5 y B9:** se documentan como pendientes (B9 se verificará en la prueba
   supervisada con dinero real).
 
+## Estado actual
+
+- **Resueltos:** A1-A5, M1, M2, M5-M14 y B1, B2, B3, B4, B6, B7, B8 (cada uno con su commit y
+  su test de regresión).
+- **Siguen abiertos:** M3 (libro fiscal sin deduplicación ni conciliación) y M4 (moneda y
+  signo de funding y comisiones sin verificar), que no estaban en el lote acordado; B5 y B9,
+  documentados como pendientes (B9 se verificará en la prueba supervisada con dinero real).
+- Las 10 mutaciones que sobrevivían en el commit base (M14) mueren ahora; el kill switch live
+  tiene test de integración (M2).
+- Live sigue sin probarse contra Kraken real: lo cubierto aquí es la lógica del bot contra
+  una API privada simulada a partir de la documentación.
+
 ## Resumen
 
 | ID | Gravedad | Hallazgo | PoC | Estado |
@@ -43,8 +55,8 @@
 | A5 | Alta | Cierre de emergencia frágil | I, K | resuelto (`e9a7925`) |
 | M1 | Media | Tamaños y precios en notación científica en `sendorder` | formato | resuelto (`b5fc7d0`) |
 | M2 | Media | Stops de catástrofe: tarde, reemplazo no atómico, sobreviven al cierre | G, G2, L | resuelto (`29da910`) |
-| M3 | Media | Libro fiscal sin deduplicación ni conciliación | D | pendiente |
-| M4 | Media | Moneda y signo de funding y comisiones sin verificar | (lectura) | pendiente |
+| M3 | Media | Libro fiscal sin deduplicación ni conciliación | D | pendiente (fuera del lote acordado) |
+| M4 | Media | Moneda y signo de funding y comisiones sin verificar | (lectura) | pendiente (fuera del lote acordado) |
 | M5 | Media | Puerta `--check` mal invalidada y sin revalidar permisos | M | resuelto (`8c87bfd`) |
 | M6 | Media | "SSH solo con clave" puede no aplicarse | (OpenSSH) | resuelto (`70deb3f`) |
 | M7 | Media | `copybot-cli --status` falla con el servicio activo | (tests) | resuelto (`454058d`) |
@@ -162,7 +174,7 @@ colocar antes de cancelar y cancelar al cerrar.
 - **Regresión:** tests/integration/test_live_exchange.py::test_failed_replacement_keeps_the_old_stop, ::test_new_stop_is_placed_before_the_old_one_is_cancelled, ::test_replacement_falls_back_when_the_exchange_allows_one_stop_per_symbol, ::test_error_after_trading_does_not_skip_the_stop_sync, ::test_kill_switch_cancels_the_catastrophe_stops
 
 ### M3 — Libro fiscal sin deduplicación ni conciliación
-**Gravedad:** media · **Estado:** pendiente
+**Gravedad:** media · **Estado:** pendiente (fuera del lote de correcciones acordado; sigue abierto)
 
 Se ignoran `fill_id` y `booking_uid` (PoC D: una fila duplicada impide cerrar la
 posición); `drain_ledger()` vacía la memoria antes de escribir; `/fills` solo se
@@ -172,7 +184,7 @@ escritura antes de avanzar cursores, sondeo en cada ciclo con paginación y
 conciliación del neto de fills con las posiciones.
 
 ### M4 — Moneda y signo sin verificar
-**Gravedad:** media · **Estado:** pendiente
+**Gravedad:** media · **Estado:** pendiente (fuera del lote de correcciones acordado; sigue abierto)
 
 El funding se calcula como `new_balance − old_balance` y se etiqueta USD sin
 comprobar `asset`; el signo de `fee` no se verifica; `report.py` ignora
