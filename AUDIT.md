@@ -55,7 +55,7 @@
 | M12 | Media | Los topes se aplican al objetivo, no a la exposición real | (lectura) | resuelto (`66e8f39`) |
 | M13 | Media | Tras un HALT las posiciones quedan con stops laxos | (lectura) | resuelto (`6efcace`) |
 | M14 | Media | Lagunas de tests (mutaciones supervivientes) | mutación | resuelto (`0c8d487`) |
-| B1 | Baja | `config.toml` no ignorado; pre-commit voluntario; sin CI | (lectura) | pendiente |
+| B1 | Baja | `config.toml` no ignorado; pre-commit voluntario; sin CI | (lectura) | resuelto (`dbc9c96`) |
 | B2 | Baja | `Authorization: Bearer x` deja el token | (lectura) | pendiente |
 | B3 | Baja | Año fiscal y día BCE en UTC en vez de Madrid | (lectura) | pendiente |
 | B4 | Baja | Export no atómico; funding asignable a dos posiciones | (lectura) | pendiente |
@@ -265,9 +265,10 @@ httpx; deduplicación de alertas. No hay test de integración del kill switch li
 ## Bajas
 
 ### B1 — `.gitignore`, pre-commit y CI
-**Gravedad:** baja · **Estado:** pendiente
+**Gravedad:** baja · **Estado:** resuelto en `dbc9c96`
 
 `config.toml` no está ignorado, el pre-commit es voluntario y no hay CI.
+- **Regresión:** tests/unit/test_repo_hygiene.py (4 tests)
 
 ### B2 — Redacción de `Authorization: Bearer`
 **Gravedad:** baja · **Estado:** pendiente
