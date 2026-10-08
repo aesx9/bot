@@ -52,6 +52,7 @@
   una API privada simulada a partir de la documentación.
 
 - **Segunda auditoría** (al final): N1-N10, T1 y T2, todos resueltos; incluye la checklist de la prueba supervisada live.
+- **Revisión de la segunda auditoría** (al final): R1-R4, resueltos antes de la prueba supervisada.
 
 ## Resumen
 
@@ -513,6 +514,64 @@ Las órdenes de emergencia se registraban con su nocional: tras `--reset-halt` e
 saltar en la primera orden normal.
 
 - **Regresión:** tests/unit/test_executor.py::test_emergency_closes_do_not_count_in_the_notional_limit
+# Revisión de la segunda auditoría
+
+> Revisión focalizada sobre `2def476`: cada corrección de N1-N10, T1 y T2 se verificó por
+> reversión (N1, N3, N5-N8, N10) o por mutación (N2 y N4, cuyos tests no importan con el código
+> anterior, y T1 y T2): todas cerradas, sus tests las detectan. `make check` en verde. Se
+> buscaron regresiones de la lectura de `/fills` antes de planificar, del libro en ciclos
+> detenidos, de `--sync-ledger` (frente a M10 y al bloqueo de instancia) y del renombrado de
+> `FundingEvent`: solo R1. R2 y R3 refuerzan N5; R4 completa N4.
+
+| ID | Gravedad | Hallazgo | PoC | Estado |
+|---|---|---|---|---|
+| R1 | Baja/Media | `--sync-ledger` consume en silencio el fill de un stop de catástrofe y el bot reabre tras `--reset-halt` | P6 | resuelto (`4fef309`) |
+| R2 | Baja/Media | N5 depende de que Kraken conserve el cliOrdId `cs-` del stop disparado | (lectura) | resuelto (`4fef309`) |
+| R3 | Baja | `assignor` y `unwind*` no cuentan como cierres del exchange | (lectura) | resuelto (`4fef309`) |
+| R4 | Baja | El informe de rendimiento no ve `funding_moneda.csv` | (lectura) | resuelto (`52a48b4`) |
+
+### R1 — `--sync-ledger` y los fills protectores
+**Gravedad:** baja/media · **Estado:** resuelto en `4fef309`
+
+Parada sin cierre (p. ej. controles del líder), el proceso sale con 3 y salta el stop. El README
+pide `--sync-ledger` y después `--reset-halt`: `--sync-ledger` importaba el fill y lo marcaba
+como visto, pero solo imprimía "1 fills"; al reanudar, la lectura previa a planificar ya no lo
+veía y el bot reabría (PoC P6: `ok 1 acciones`, posición reabierta). Sin `--sync-ledger` sí se
+detenía. Corrección: `--sync-ledger` muestra la nota, la guarda en el estado
+(`protective_fills_unreviewed`) y detiene el bot si no lo estaba; el bot también la guarda al
+detenerse por ella y al importarla detenido; `--reset-halt` la lista y exige escribir
+`HE REVISADO LOS FILLS` antes de `REANUDAR`; `--status` la muestra.
+
+- **Regresión:** tests/integration/test_halted_ledger.py::test_sync_ledger_shows_and_keeps_protective_fills_and_reset_requires_review (detenido y sin detener), ::test_sync_ledger_flags_a_foreign_fill_in_a_managed_symbol, ::test_sync_ledger_without_protective_fills_changes_nothing_else, ::test_halted_ledger_keeps_protective_fills_for_review
+### R2 — Refuerzo de N5: fills ajenos en símbolos gestionados
+**Gravedad:** baja/media · **Estado:** resuelto en `4fef309`
+
+N5 detectaba el stop por el prefijo `cs-` del cliOrdId: si Kraken no lo conserva al disparar
+el stop, el fill salía como `bot` (cualquier cliOrdId) o `manual` y el bot reabría. Corrección:
+`bot` solo si el cliOrdId es de una orden que envió el bot (`sent_orders`, que el ejecutor
+guarda antes de enviar, últimas 1000, o `pending_orders`); cualquier otro fill en un símbolo
+gestionado (antes o después del ciclo) es ajeno y detiene el bot con alerta crítica, como un
+stop de catástrofe. Efecto al actualizar: un estado anterior no tiene `sent_orders`, de modo
+que un fill de una orden enviada antes de actualizar y aún no leída se tomaría por ajeno y
+detendría el bot (lado seguro); actualizar con el bot detenido y tras `--sync-ledger` lo evita.
+
+- **Regresión:** tests/integration/test_halted_ledger.py::test_a_catastrophe_stop_or_liquidation_halts_instead_of_reopening[stop-sin-cliOrdId] y [stop-con-otro-cliOrdId], ::test_a_foreign_fill_while_trading_in_a_managed_symbol_halts_after_the_cycle; tests/integration/test_live_exchange.py::test_fill_origin_only_trusts_the_bots_own_cli_ord_ids
+### R3 — Liquidación y desapalancamiento por `fillType`
+**Gravedad:** baja · **Estado:** resuelto en `4fef309`
+
+Solo se reconocía la cadena "liquidation". Ahora `assignor` cuenta como `liquidación` y
+`unwindBankrupt`/`unwindCounterparty` como `desapalancamiento`; todos detienen el bot. Los
+valores reales quedan para la prueba supervisada (checklist).
+
+- **Regresión:** tests/integration/test_halted_ledger.py::test_a_catastrophe_stop_or_liquidation_halts_instead_of_reopening[assignor], [unwindBankrupt], [unwindCounterparty]; test_live_exchange.py::test_fill_origin_only_trusts_the_bots_own_cli_ord_ids
+### R4 — `report.py` y `funding_moneda.csv`
+**Gravedad:** baja · **Estado:** resuelto en `52a48b4`
+
+El informe de rendimiento solo leía `funding.csv`. Ahora el funding en EUR se muestra aparte
+(pagado y cobrado, sin convertir), como las comisiones; en otra moneda o sin moneda no se suma
+y se avisa.
+
+- **Regresión:** tests/unit/test_report.py::test_live_report_includes_funding_in_other_currencies
 ## Checklist de la prueba supervisada live (capital mínimo)
 
 - [ ] Log de cuenta en una cuenta con colateral EUR: qué traen `asset` y `collateral` (¿discrepan?
@@ -526,6 +585,13 @@ saltar en la primera orden normal.
       (ajustar `ONE_STOP_PER_SYMBOL_STATUSES`); cambiar el tamaño y comprobar que el stop se sustituye
       sin quedar ningún instante sin él; `openorders` devuelve el `cliOrdId` `cs-`; el stop aparece
       en la web de Kraken.
+- [ ] Fill de un stop disparado: ¿conserva el `cliOrdId` `cs-`? ¿qué `fillType` trae? (R2 detiene el
+      bot igualmente como fill ajeno, pero el origen en `kraken_fills.csv` y en el export depende
+      de ello; si llega sin `cs-`, saldrá como `manual`).
+- [ ] `fillType` real de una liquidación y de un desapalancamiento (¿`liquidation`, `assignor`,
+      `unwindBankrupt`, `unwindCounterparty`, otro?): ajustar `LIQUIDATION_FILLS` y
+      `DELEVERAGING_FILLS` si no coinciden (solo verificable por la documentación o el soporte de
+      Kraken si no ocurre durante la prueba).
 - [ ] Kill switch real: cierre, cancelación de los stops `cs-` y fills del cierre en el libro.
 - [ ] `--sync-ledger` con el bot detenido trae los fills y el funding pendientes (y no envía nada).
 - [ ] Copiar un cierre del líder con el nocional de la hora casi agotado: el cierre sale (N1).
@@ -533,3 +599,7 @@ saltar en la primera orden normal.
       contrastados con el historial de Kraken; signo del funding verificado.
 - [ ] Reinicio por systemd sin pedir confirmación; salida 3 al detenerse; aviso de `OnFailure`;
       healthcheck externo.
+- [ ] (Opcional) El funding llega de verdad a `funding.csv` tras un periodo de funding con una
+      posición abierta (los nombres del filtro `info` del log de cuenta son los reales).
+- [ ] (Opcional) Sin errores de límite de peticiones (`apiLimitExceeded`, 429) en `copybot.log`
+      ahora que `/fills` se lee dos veces por ciclo.
