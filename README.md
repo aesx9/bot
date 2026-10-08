@@ -317,8 +317,8 @@ del funding. Los avisos repetidos se agrupan cada 10 minutos.
    ```bash
    sudo -u copybot touch /var/lib/copybot/STOP
    ```
-   En el siguiente ciclo (60 s como mucho, o antes si hay actividad del
-   líder) cierra todas las posiciones gestionadas con órdenes reduceOnly,
+   Un vigilante lo detecta en ~1 s (aunque `reconcile_interval_seconds` sea alto)
+   y cierra todas las posiciones gestionadas con órdenes reduceOnly,
    sin límite de órdenes por minuto y en hasta 5 rondas, y se detiene. Si
    algo queda abierto, envía una alerta crítica y sigue reintentando el cierre mientras el
    proceso esté vivo (cada símbolo se cierra por separado: un mercado con problemas no bloquea los

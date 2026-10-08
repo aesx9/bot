@@ -118,6 +118,7 @@ class Engine:
         emergency_pause_seconds: float = 2,
         emergency_retry_seconds: float = 15,
         healthcheck: Healthcheck | None = None,
+        kill_switch_poll_seconds: float = 1,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self.cfg = cfg
@@ -144,6 +145,7 @@ class Engine:
         self._emergency_pause = emergency_pause_seconds
         self._emergency_retry_seconds = emergency_retry_seconds
         self._health = healthcheck
+        self._kill_poll = kill_switch_poll_seconds
         self._stop_requested = False
         self._stopped: asyncio.Event | None = None  # el de run_forever, para request_stop()
         self._sleep = sleep
@@ -574,7 +576,7 @@ class Engine:
     # --- bucle principal ---
 
     async def run_forever(self, stream_factory: Callable[..., Stream]) -> CycleReport | None:
-        """WebSocket (con debounce) + ciclo REST de respaldo + heartbeat.
+        """WebSocket (con debounce) + ciclo REST de respaldo + heartbeat + vigilante de STOP.
 
         Termina cuando el bot queda detenido. stream_factory recibe on_fills y
         on_connected y devuelve un objeto con run() y stop() (UserFillsStream).
@@ -616,6 +618,16 @@ class Engine:
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(stopped.wait(), wait)
 
+        async def stop_watcher() -> None:
+            """El fichero STOP se atiende en ~1 s, no al siguiente ciclo (que con
+            reconcile_interval_seconds alto podía tardar hasta una hora)."""
+            while not stopped.is_set():
+                if (kill_switch_active(self._kill_dirs) is not None
+                        and not self.state.emergency_close_pending):
+                    await run_cycle("kill_switch")
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(stopped.wait(), self._kill_poll)
+
         async def heartbeat() -> None:
             while not stopped.is_set():
                 with contextlib.suppress(TimeoutError):
@@ -628,7 +640,8 @@ class Engine:
 
         tasks = [asyncio.create_task(stream.run(), name="websocket"),
                  asyncio.create_task(reconcile_loop(), name="reconciliación"),
-                 asyncio.create_task(heartbeat(), name="heartbeat")]
+                 asyncio.create_task(heartbeat(), name="heartbeat"),
+                 asyncio.create_task(stop_watcher(), name="vigilante de STOP")]
         stop_wait = asyncio.create_task(stopped.wait())
         try:
             # Ninguna de las tres tareas debe terminar sola: si una muere (un fallo

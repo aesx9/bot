@@ -103,3 +103,18 @@ async def test_emergency_close_is_sent_even_if_the_state_cannot_be_saved(
     report = await w.engine.cycle()  # tampoco debe lanzar al guardar la parada
     assert report.outcome.value == "halted"
     assert await w.positions() == {}
+
+
+async def test_stop_file_is_honoured_within_seconds_not_at_the_next_cycle(tmp_path: Path) -> None:
+    """M9: con reconcile_interval_seconds alto el kill switch tardaba hasta ese intervalo."""
+    w = World(tmp_path, FakeLeader("100000", BTC="1"))
+    fast(w)
+    w.cfg = w.cfg.model_copy(update={"timing": w.cfg.timing.model_copy(
+        update={"reconcile_interval_seconds": D(3600), "heartbeat_seconds": D(3600)})})
+    w.engine.cfg = w.cfg
+    w.engine._kill_poll = 0.05
+    loop = asyncio.get_running_loop()
+    loop.call_later(0.3, (w.tmp / "STOP").touch)  # tras el primer ciclo REST (ya abrió la posición)
+    report = await asyncio.wait_for(w.engine.run_forever(lambda **cb: IdleStream(**cb)), 5)
+    assert report is not None and report.outcome.value == "halted"
+    assert await w.positions() == {} and w.state.kill_switch_closed
