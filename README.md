@@ -430,13 +430,31 @@ Descarta:
 El leaderboard no forma parte de la API documentada de Hyperliquid y puede
 cambiar o desaparecer.
 
+## Copias de seguridad
+
+`state.json` (parada, pico de capital, posiciones gestionadas) y los CSV (en live, el libro
+fiscal: `kraken_fills.csv`, `fees.csv`, `funding.csv`) viven solo en el VPS. El timer
+`copybot-backup.timer` guarda cada día una copia (`state.json` + `*.csv`, **sin** `.env`, config
+ni logs) en `/var/backups/copybot`, 0600, y conserva las 14 últimas.
+
+Es una copia **en la misma máquina**: protege de un borrado o de un fichero corrupto, no de
+perder el VPS. Trae las copias a otro sitio desde tu PC, p. ej.:
+
+```bash
+rsync -a --rsync-path="sudo rsync" tu_usuario@tu_vps:/var/backups/copybot/ ~/copias-copybot/
+```
+
+Restaurar: con el bot parado, `tar -xzf copybot-<fecha>.tar.gz -C /var/lib/copybot/data` y
+`chown -R copybot:copybot /var/lib/copybot/data`. Kraken conserva el historial de fills y de
+cuenta: es la segunda fuente si el libro local se pierde.
+
 ## Actualizar el bot
 
 ```bash
 sudo systemctl stop copybot
 cd /opt/copybot/app && sudo git pull
 sudo .venv/bin/python -m pip install --require-hashes --no-deps -r requirements.lock
-sudo install -m 644 deploy/copybot.service deploy/copybot-failure.service /etc/systemd/system/ && sudo systemctl daemon-reload
+sudo install -m 644 deploy/copybot*.service deploy/copybot-backup.timer /etc/systemd/system/ && sudo install -m 755 deploy/copybot-backup /usr/local/bin/ && sudo systemctl daemon-reload
 sudo copybot-cli --check        # solo live
 sudo copybot-cli --live         # solo live: el código cambió, hay que confirmar de nuevo
 sudo systemctl start copybot

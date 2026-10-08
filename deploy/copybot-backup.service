@@ -1,0 +1,30 @@
+# /etc/systemd/system/copybot-backup.service (lo lanza copybot-backup.timer)
+[Unit]
+Description=Copia de seguridad de copybot (estado y CSV, sin secretos)
+
+[Service]
+Type=oneshot
+User=copybot
+Group=copybot
+ExecStart=/usr/local/bin/copybot-backup
+StandardInput=null
+UMask=0077
+
+# --- Endurecimiento: lee los datos y escribe solo en el directorio de copias ---
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadOnlyPaths=/var/lib/copybot
+ReadWritePaths=/var/backups/copybot
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+AmbientCapabilities=

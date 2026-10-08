@@ -198,3 +198,83 @@ def test_service_stops_gracefully_on_sigterm() -> None:
     s = service()
     assert s["KillSignal"] == ["SIGTERM"]
     assert int(s["TimeoutStopSec"][0]) > 25  # el bot espera hasta 25 s al ciclo en curso
+
+
+# --- B7: instalación sin pip sin hash y copias de seguridad ---
+
+
+def test_setup_does_not_upgrade_pip_without_a_hash() -> None:
+    text = (DEPLOY / "setup_vps.sh").read_text()
+    code = [ln for ln in text.splitlines() if not ln.lstrip().startswith("#")]
+    assert not any("--upgrade pip" in ln for ln in code)  # solo aparece en el comentario
+    assert any("pip install -q --require-hashes --no-deps -r" in ln for ln in code)
+
+
+def test_setup_installs_the_backup_job() -> None:
+    text = (DEPLOY / "setup_vps.sh").read_text()
+    assert "copybot-backup.timer" in text and "/var/backups/copybot" in text
+    unit = (DEPLOY / "copybot-backup.service").read_text()
+    assert "User=copybot" in unit and "ReadOnlyPaths=/var/lib/copybot" in unit
+    assert "ReadWritePaths=/var/backups/copybot" in unit
+    assert "Persistent=true" in (DEPLOY / "copybot-backup.timer").read_text()
+
+
+def _run_backup(tmp_path: Path, keep: int = 14) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "COPYBOT_DATA": str(tmp_path / "var"),
+           "COPYBOT_BACKUP_DIR": str(tmp_path / "backups"), "COPYBOT_BACKUP_KEEP": str(keep)}
+    return subprocess.run(["bash", str(DEPLOY / "copybot-backup")], env=env, capture_output=True,
+                          text=True, check=False)
+
+
+def _populate(tmp_path: Path) -> None:
+    var = tmp_path / "var"
+    for rel, content in {
+        ".env": "KRAKEN_FUTURES_API_SECRET=NO_DEBE_ESTAR",  # pragma: allowlist secret
+        "config.toml": "leader_address = '0x'", "service.env": "COPYBOT_EXTRA_ARGS=--live",
+        "data/live/state.json": "{}", "data/live/kraken_fills.csv": "a,b\n1,2\n",
+        "data/live/fees.csv": "x\n", "data/live/logs/copybot.log": "log",
+        "data/live/copybot.lock": "123", "data/paper/trades.csv": "t\n",
+        "data/paper/state.json": "{}",
+    }.items():
+        f = var / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(content)
+
+
+def test_backup_contains_state_and_csv_but_never_secrets_logs_or_lock(tmp_path: Path) -> None:
+    import stat
+    import tarfile
+
+    _populate(tmp_path)
+    r = _run_backup(tmp_path)
+    assert r.returncode == 0, r.stderr
+    [archive] = list((tmp_path / "backups").glob("copybot-*.tar.gz"))
+    assert stat.S_IMODE(archive.stat().st_mode) == 0o600
+    with tarfile.open(archive) as tar:
+        names = sorted(n.removeprefix("./") for n in tar.getnames())
+        assert names == ["live/fees.csv", "live/kraken_fills.csv", "live/state.json",
+                         "paper/state.json", "paper/trades.csv"]
+        assert b"NO_DEBE_ESTAR" not in b"".join(
+            tar.extractfile(m).read() for m in tar.getmembers() if m.isfile())  # type: ignore[union-attr]
+
+
+def test_backup_keeps_only_the_latest_and_leaves_no_temp_files(tmp_path: Path) -> None:
+    _populate(tmp_path)
+    dest = tmp_path / "backups"
+    dest.mkdir()
+    for i in range(5):
+        old = dest / f"copybot-2020010{i}T000000.000000000Z.tar.gz"
+        old.write_text("x")
+        os.utime(old, (1_000_000 + i, 1_000_000 + i))
+    assert _run_backup(tmp_path, keep=3).returncode == 0
+    kept = sorted(p.name for p in dest.iterdir())
+    assert len(kept) == 3 and not any(n.startswith(".backup") for n in kept)
+    assert "copybot-20200100T000000.000000000Z.tar.gz" not in kept  # las más viejas se van
+    assert any(not n.startswith("copybot-2020") for n in kept)  # y la nueva está
+
+
+def test_backup_with_nothing_to_copy_is_not_an_error(tmp_path: Path) -> None:
+    (tmp_path / "var" / "data").mkdir(parents=True)
+    r = _run_backup(tmp_path)
+    assert r.returncode == 0 and "no hay estado" in r.stderr
+    assert not list((tmp_path / "backups").glob("copybot-*"))

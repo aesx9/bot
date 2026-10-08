@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Copia de seguridad del estado y los CSV de copybot (SIN secretos: nunca incluye .env,
+# service.env ni config.toml; tampoco logs ni el lockfile).
+#
+#   copybot-backup            (lo lanza copybot-backup.timer una vez al día)
+#
+# Qué guarda: <DATA>/data/<modo>/state.json y todos los *.csv (trades, funding, equity y,
+# en live, kraken_fills.csv y fees.csv: el libro fiscal). Las copias quedan en
+# /var/backups/copybot con permisos 0600 y se conservan las últimas KEEP.
+#
+# OJO: es una copia EN LA MISMA MÁQUINA: protege de un borrado o una corrupción, no de
+# perder el VPS. Copia /var/backups/copybot a otro sitio (ver README, "Copias de seguridad").
+set -euo pipefail
+
+DATA=${COPYBOT_DATA:-/var/lib/copybot}
+DEST=${COPYBOT_BACKUP_DIR:-/var/backups/copybot}
+KEEP=${COPYBOT_BACKUP_KEEP:-14}
+
+umask 077
+mkdir -p "$DEST"
+stamp="$(date -u +%Y%m%dT%H%M%S.%NZ)"
+tmp="$(mktemp -p "$DEST" .backup.XXXXXX)"
+trap 'rm -f "$tmp"' EXIT
+
+# Solo state.json y *.csv, un nivel por debajo de data/ (data/<modo>/...)
+files="$(cd "$DATA/data" && find . -mindepth 2 -maxdepth 2 -type f \
+    \( -name state.json -o -name '*.csv' \) -print)"
+if [[ -z "$files" ]]; then
+    echo "copybot-backup: no hay estado ni CSV que copiar en $DATA/data" >&2
+    exit 0
+fi
+(cd "$DATA/data" && tar -czf "$tmp" -T <(printf '%s\n' "$files"))
+mv "$tmp" "$DEST/copybot-$stamp.tar.gz"
+trap - EXIT
+
+# Rotación: se conservan las KEEP más recientes
+ls -1t "$DEST"/copybot-*.tar.gz | tail -n +$((KEEP + 1)) | xargs -r rm -f --
+echo "copybot-backup: $DEST/copybot-$stamp.tar.gz"

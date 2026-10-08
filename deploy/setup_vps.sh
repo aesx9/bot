@@ -18,7 +18,8 @@
 # 5. Usuario de sistema "copybot" sin privilegios ni shell.
 # 6. Entorno virtual con dependencias fijadas por hash.
 # 7. /var/lib/copybot (700) con config de ejemplo en modo PAPER.
-# 8. Servicio systemd, logrotate y el atajo copybot-cli. NO arranca el bot.
+# 8. Servicio systemd, aviso de fallo, logrotate, copias diarias y el atajo copybot-cli.
+#    NO arranca el bot.
 set -euo pipefail
 
 APP=/opt/copybot/app
@@ -86,6 +87,7 @@ systemctl restart fail2ban
 echo "== 5. Usuario de servicio"
 id copybot >/dev/null 2>&1 || useradd --system --home-dir "$DATA" --shell /usr/sbin/nologin copybot
 install -d -o copybot -g copybot -m 700 "$DATA" "$DATA/data"
+install -d -o copybot -g copybot -m 700 /var/backups/copybot
 
 echo "== 6. Entorno virtual (dependencias con hash)"
 chown -R root:root "$APP"
@@ -93,7 +95,8 @@ chmod -R go-w "$APP"
 git config --system --get-all safe.directory | grep -qx "$APP" \
     || git config --system --add safe.directory "$APP"
 [[ -d "$APP/.venv" ]] || python3.12 -m venv "$APP/.venv"
-"$APP/.venv/bin/python" -m pip install -q --upgrade pip
+# pip: el que trae el venv de Ubuntu 24.04 (24.0) ya admite --require-hashes. No se hace
+# "pip install --upgrade pip": bajaría un pip sin verificar hash antes de verificar el resto.
 "$APP/.venv/bin/python" -m pip install -q --require-hashes --no-deps -r "$APP/requirements.lock"
 # El paquete se ejecuta desde src/ (PYTHONPATH en el servicio y en copybot-cli):
 # así no hace falta instalar setuptools sin hash.
@@ -118,8 +121,12 @@ install -m 644 "$APP/deploy/copybot.service" /etc/systemd/system/copybot.service
 install -m 644 "$APP/deploy/copybot-failure.service" /etc/systemd/system/copybot-failure.service
 install -m 644 "$APP/deploy/logrotate.conf" /etc/logrotate.d/copybot
 install -m 755 "$APP/deploy/copybot-cli" /usr/local/bin/copybot-cli
+install -m 755 "$APP/deploy/copybot-backup" /usr/local/bin/copybot-backup
+install -m 644 "$APP/deploy/copybot-backup.service" /etc/systemd/system/copybot-backup.service
+install -m 644 "$APP/deploy/copybot-backup.timer" /etc/systemd/system/copybot-backup.timer
 systemctl daemon-reload
 systemctl enable copybot
+systemctl enable --now copybot-backup.timer
 
 echo
 echo "Listo. El bot NO se ha arrancado. Siguientes pasos (README, 'Puesta en marcha'):"
