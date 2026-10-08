@@ -60,7 +60,7 @@
 | B3 | Baja | Año fiscal y día BCE en UTC en vez de Madrid | (lectura) | resuelto (`2f3d6c2`) |
 | B4 | Baja | Export no atómico; funding asignable a dos posiciones | (lectura) | resuelto (`03b9a29`) |
 | B5 | Baja | `PaperAccount.orders` crece sin límite | (lectura) | pendiente (documentado) |
-| B6 | Baja | Telegram: dedupe también de críticas; `InvalidURL` sin capturar | (lectura) | pendiente |
+| B6 | Baja | Telegram: dedupe también de críticas; `InvalidURL` sin capturar | (lectura) | resuelto (`b769bfa`) |
 | B7 | Baja | `pip --upgrade pip` sin hash; sin backups | (lectura) | pendiente |
 | B8 | Baja | Fila duplicada en `trades.csv` tras caída | (lectura) | pendiente |
 | B9 | Baja | Posible desfase de `/openpositions` tras un fill | (no verificable) | pendiente (documentado) |
@@ -298,10 +298,11 @@ La cuenta paper guarda todas las órdenes y las reserializa en cada guardado.
 Sin impacto en seguridad; se aborda si el tamaño de `state.json` molesta.
 
 ### B6 — Telegram: dedupe de críticas e `InvalidURL`
-**Gravedad:** baja · **Estado:** pendiente
+**Gravedad:** baja · **Estado:** resuelto en `b769bfa`
 
 El dedupe por texto también silencia alertas CRÍTICAS repetidas y
 `httpx.InvalidURL` no es `HTTPError`, así que escapa de `alert()`.
+- **Regresión:** tests/unit/test_alerts.py::test_critical_alerts_are_not_silenced_for_ten_minutes y ::test_any_failure_sending_is_swallowed_including_invalid_urls
 
 ### B7 — Instalación en el VPS
 **Gravedad:** baja · **Estado:** pendiente
