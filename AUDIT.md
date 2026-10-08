@@ -49,7 +49,7 @@
 | M6 | Media | "SSH solo con clave" puede no aplicarse | (OpenSSH) | resuelto (`70deb3f`) |
 | M7 | Media | `copybot-cli --status` falla con el servicio activo | (tests) | resuelto (`454058d`) |
 | M8 | Media | Sin vigilancia externa, watchdog ni manejo de SIGTERM | (lectura) | resuelto (`2c2087d`) |
-| M9 | Media | El kill switch puede tardar hasta 1 h | (lectura) | pendiente |
+| M9 | Media | El kill switch puede tardar hasta 1 h | (lectura) | resuelto (`a248c21`) |
 | M10 | Media | Posiciones manuales en mercados del líder se adoptan | E | pendiente |
 | M11 | Media | Sin coherencia de precios HL↔Kraken; `max_position_size` sin usar | (lectura) | pendiente |
 | M12 | Media | Los topes se aplican al objetivo, no a la exposición real | (lectura) | pendiente |
@@ -211,10 +211,11 @@ opcional con la URL en `.env`, `OnFailure=` y parada ordenada por señal.
 - **Regresión:** tests/unit/test_healthcheck.py; test_resilience.py::test_healthy_bot_pings_ok, ::test_failing_halted_or_hung_bot_pings_fail, ::test_heartbeat_task_reports_to_the_healthcheck, ::test_graceful_stop_waits_for_the_cycle_in_progress, ::test_sigterm_and_sigint_request_a_graceful_stop; test_deploy.py::test_service_notifies_from_outside_the_bot_when_it_fails, ::test_service_stops_gracefully_on_sigterm
 
 ### M9 — Latencia del kill switch
-**Gravedad:** media · **Estado:** pendiente
+**Gravedad:** media · **Estado:** resuelto en `a248c21`
 
 STOP solo se mira al inicio de cada ciclo y `reconcile_interval_seconds` admite
 hasta 3600 s. Corrección: vigilante de STOP cada segundo.
+- **Regresión:** tests/integration/test_emergency.py::test_stop_file_is_honoured_within_seconds_not_at_the_next_cycle
 
 ### M10 — Posiciones manuales adoptadas
 **Gravedad:** media · **Estado:** pendiente
