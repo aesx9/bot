@@ -53,7 +53,7 @@
 | M10 | Media | Posiciones manuales en mercados del líder se adoptan | E | resuelto (`e8e0274`) |
 | M11 | Media | Sin coherencia de precios HL↔Kraken; `max_position_size` sin usar | (lectura) | resuelto (`f138907`) |
 | M12 | Media | Los topes se aplican al objetivo, no a la exposición real | (lectura) | resuelto (`66e8f39`) |
-| M13 | Media | Tras un HALT las posiciones quedan con stops laxos | (lectura) | pendiente |
+| M13 | Media | Tras un HALT las posiciones quedan con stops laxos | (lectura) | resuelto (`6efcace`) |
 | M14 | Media | Lagunas de tests (mutaciones supervivientes) | mutación | pendiente |
 | B1 | Baja | `config.toml` no ignorado; pre-commit voluntario; sin CI | (lectura) | pendiente |
 | B2 | Baja | `Authorization: Bearer x` deja el token | (lectura) | pendiente |
@@ -242,12 +242,13 @@ cada orden no reduceOnly.
 - **Regresión:** tests/unit/test_executor.py::test_increase_above_the_per_asset_cap_is_skipped_not_sent, ::test_open_is_skipped_if_real_positions_already_use_the_total, ::test_reductions_and_closes_are_never_blocked_by_the_guard; test_emergency.py::test_open_is_skipped_while_a_previous_close_has_not_filled
 
 ### M13 — HALT sin cerrar y stops laxos
-**Gravedad:** media · **Estado:** pendiente
+**Gravedad:** media · **Estado:** resuelto en `6efcace`
 
 Solo drawdown y STOP cierran; el stop al 20 % del precio equivale a ~40 % del
 capital a 2x. Corrección (decisión de diseño): distancia del stop =
 `max_drawdown_pct` / apalancamiento efectivo; HALT sin cierre pero con alerta
 crítica que lista las posiciones abiertas.
+- **Regresión:** tests/unit/test_state_risk.py::test_catastrophe_stop_distance_follows_drawdown_over_leverage y ::test_stop_loss_at_the_stop_equals_the_drawdown_limit; test_live_exchange.py::test_catastrophe_stop_distance_comes_from_drawdown_and_leverage; test_resilience.py::test_halt_without_auto_close_alerts_what_stays_open y ::test_halt_with_everything_closed_has_no_open_positions_note; test_main.py::test_live_summary_shows_the_computed_catastrophe_stop
 
 ### M14 — Lagunas de tests
 **Gravedad:** media · **Estado:** pendiente
