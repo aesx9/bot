@@ -57,6 +57,10 @@ LOG_PAGE = 50  # entradas del account-log por petición
 LOG_MAX_PAGES = 40
 LOG_INFO = ("funding rate change", "futures trade", "futures liquidation",
             "futures partial liquidation")
+# Estado de sendorder con el que Kraken rechazaría un segundo stop reduceOnly sobre la misma
+# posición (HIPÓTESIS sin verificar contra la API real: comprobarlo en la prueba supervisada).
+# Solo con él se cancela el stop antiguo antes de colocar el nuevo.
+ONE_STOP_PER_SYMBOL_STATUSES = frozenset({"wouldNotReducePosition"})
 SEEN_MEMORY = 500  # ids recordados (fills y entradas del log) para no repetir
 
 # sendStatus.status que significan "no ejecutada, sin error del exchange"
@@ -598,19 +602,28 @@ class LiveExchange:
             if keep and len(current) == 1:
                 continue
             # Primero se coloca el nuevo y solo entonces se retira el antiguo: la posición
-            # no queda ni un instante sin protección. Si el exchange no admite dos stops
-            # reduceOnly a la vez, se retira el antiguo y se reintenta; si el alta lanza
-            # una excepción, el antiguo sigue en su sitio.
+            # no queda ni un instante sin protección. Solo si el exchange responde que no
+            # admite dos stops reduceOnly a la vez se retira el antiguo y se reintenta;
+            # cualquier otro rechazo (mercado suspendido, precio inválido...) o una excepción
+            # dejan el antiguo en su sitio.
             status = await self._place_stop(symbol, side, size, stop)
             if status == "placed":
                 for o in current:
                     await self._cancel(o)
                 continue
+            if current and status not in ONE_STOP_PER_SYMBOL_STATUSES:
+                warnings.append(
+                    f"{symbol}: Kraken rechazó el stop de catástrofe nuevo ({status}); se "
+                    "mantiene el stop anterior, que puede no cubrir el tamaño o el precio "
+                    "actuales: revísalo en la web de Kraken")
+                continue
             for o in current:
                 await self._cancel(o)
-            status = await self._place_stop(symbol, side, size, stop)
+            if current:
+                status = await self._place_stop(symbol, side, size, stop)
             if status != "placed":
-                warnings.append(f"{symbol}: no se pudo colocar el stop de catástrofe ({status})")
+                warnings.append(f"{symbol}: no se pudo colocar el stop de catástrofe ({status}): "
+                                "LA POSICIÓN ESTÁ SIN STOP")
 
         for o in ours:  # stops de posiciones que ya no existen
             if str(o.get("symbol")).upper() not in managed:

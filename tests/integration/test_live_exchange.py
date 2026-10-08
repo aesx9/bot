@@ -496,6 +496,31 @@ async def test_replacement_falls_back_when_the_exchange_allows_one_stop_per_symb
     assert [o["unfilledSize"] for o in env.kraken.open_orders] == ["3"]
 
 
+@pytest.mark.parametrize("status",
+                         ["marketSuspended", "invalidPrice", "insufficientAvailableFunds"])
+async def test_other_rejections_of_the_new_stop_keep_the_old_one(env: Env, status: str) -> None:
+    """N3 (PoC P2): cualquier estado distinto de `placed` activaba el respaldo "cancelar y
+    recolocar"; si el reintento también fallaba, la posición se quedaba sin stop."""
+    market = FakeMarket()
+    env.kraken.positions = [{"symbol": SOL, "side": "long", "size": "2", "price": "100"}]
+    await env.live.sync_catastrophe_stops({SOL: D(2)}, market.specs, D(20))
+    [old] = env.kraken.open_orders
+    env.kraken.positions[0]["size"] = "3"
+    original = env.kraken._send
+
+    def reject_stops(p: dict[str, str]) -> httpx.Response:
+        if p["orderType"] == "stp":
+            return httpx.Response(200, json={"result": "success", "sendStatus": {
+                "status": status, "orderEvents": []}})
+        return original(p)
+
+    env.kraken._send = reject_stops  # type: ignore[method-assign]
+    warnings = await env.live.sync_catastrophe_stops({SOL: D(3)}, market.specs, D(20))
+    assert env.kraken.open_orders == [old] and env.kraken.cancels() == []
+    assert len(env.kraken.sends("stp")) == 2  # el original y un solo intento: sin reintento
+    assert any(status in w and "se mantiene el stop anterior" in w for w in warnings)
+
+
 async def test_error_after_trading_does_not_skip_the_stop_sync(env: Env, tmp_path: Path) -> None:
     """PoC G2: un 503 en /fills (libro fiscal) tras abrir dejaba la posición sin stop."""
     from copybot.alerts import LogAlerter
