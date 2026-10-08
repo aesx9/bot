@@ -203,9 +203,16 @@ pública real:
 - **Kraken demo:** `demo-futures.kraken.com` aparece en la documentación,
   pero desde el entorno de desarrollo todas sus rutas responden 301 a una
   página comercial de kraken.com.
+- **Hyperliquid REST (`/info`):** `clearinghouseState` devuelve
+  `assetPositions[].position.{coin, szi}`, `marginSummary.accountValue` y
+  `time` (ms), con números como cadenas (`liquidationPx` puede ser `null`).
+  `allMids` incluye mercados spot (`@1`) y otros (`#14720`), que se
+  descartan. Pesos por IP: 1200/min; `clearinghouseState` y `allMids` pesan
+  2 y el resto 20. El cliente usa como mucho la mitad.
 - **Hyperliquid WebSocket:** la documentación dice que los mensajes en
   streaming de `userFills` llevan `isSnapshot: false`; en la API real ese
-  campo no viene. Ausente se trata como `false`.
+  campo no viene. Ausente se trata como `false`. El servidor cierra si no
+  hay mensajes en 60 s: ping `{"method": "ping"}` -> `{"channel": "pong"}`.
 - **Hyperliquid, modos de cuenta:** con "unified account" o "portfolio
   margin", la documentación indica que el capital no está en
   `clearinghouseState` sino en el estado spot. Se consulta

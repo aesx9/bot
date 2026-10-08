@@ -1,0 +1,111 @@
+{
+ "marginSummary": {
+  "accountValue": "3189036.4886340001",
+  "totalNtlPos": "4056378.1395180002",
+  "totalRawUsd": "3031059.2590780002",
+  "totalMarginUsed": "202818.90692"
+ },
+ "crossMarginSummary": {
+  "accountValue": "3189036.4886340001",
+  "totalNtlPos": "4056378.1395180002",
+  "totalRawUsd": "3031059.2590780002",
+  "totalMarginUsed": "202818.90692"
+ },
+ "crossMaintenanceMarginUsed": "40563.781326",
+ "withdrawable": "2783398.6747269998",
+ "assetPositions": [
+  {
+   "type": "oneWay",
+   "position": {
+    "coin": "BTC",
+    "szi": "0.71107",
+    "leverage": {
+     "type": "cross",
+     "value": 20
+    },
+    "entryPx": "83843.1",
+    "positionValue": "59040.85317",
+    "unrealizedPnl": "-577.524231",
+    "returnOnEquity": "-0.1937403385",
+    "liquidationPx": null,
+    "marginUsed": "2952.042658",
+    "maxLeverage": 50,
+    "cumFunding": {
+     "allTime": "-612512.009346",
+     "sinceOpen": "485.80183",
+     "sinceChange": "0.0"
+    }
+   }
+  },
+  {
+   "type": "oneWay",
+   "position": {
+    "coin": "ETH",
+    "szi": "13.423",
+    "leverage": {
+     "type": "cross",
+     "value": 20
+    },
+    "entryPx": "2575.4",
+    "positionValue": "34415.2297",
+    "unrealizedPnl": "-154.430355",
+    "returnOnEquity": "-0.0893444452",
+    "liquidationPx": null,
+    "marginUsed": "1720.761485",
+    "maxLeverage": 50,
+    "cumFunding": {
+     "allTime": "-483691.27078",
+     "sinceOpen": "88.938755",
+     "sinceChange": "0.0"
+    }
+   }
+  },
+  {
+   "type": "oneWay",
+   "position": {
+    "coin": "SOL",
+    "szi": "334.31",
+    "leverage": {
+     "type": "cross",
+     "value": 20
+    },
+    "entryPx": "116.8237",
+    "positionValue": "38435.6207",
+    "unrealizedPnl": "-619.738518",
+    "returnOnEquity": "-0.3173641367",
+    "liquidationPx": null,
+    "marginUsed": "1921.781035",
+    "maxLeverage": 50,
+    "cumFunding": {
+     "allTime": "-170160.927341",
+     "sinceOpen": "227.629497",
+     "sinceChange": "0.0"
+    }
+   }
+  },
+  {
+   "type": "oneWay",
+   "position": {
+    "coin": "kPEPE",
+    "szi": "-2642162.0",
+    "leverage": {
+     "type": "cross",
+     "value": 20
+    },
+    "entryPx": "0.004044",
+    "positionValue": "10737.746368",
+    "unrealizedPnl": "-52.441262",
+    "returnOnEquity": "-0.0981558533",
+    "liquidationPx": "1.1838931362",
+    "marginUsed": "536.887318",
+    "maxLeverage": 50,
+    "cumFunding": {
+     "allTime": "-74791.701614",
+     "sinceOpen": "0.275073",
+     "sinceChange": "0.0"
+    }
+   }
+  }
+ ],
+ "time": 1791454135018
+}
