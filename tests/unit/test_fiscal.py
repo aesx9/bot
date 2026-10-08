@@ -202,6 +202,30 @@ def test_position_closed_at_year_end_utc_belongs_to_the_next_year_in_spain(tmp_p
     assert p["cierre_utc"].startswith("2025-12-31T23:30")  # los CSV siguen en UTC
 
 
+def test_each_flow_takes_the_ecb_rate_of_its_madrid_day_when_utc_says_otherwise(
+        tmp_path: Path) -> None:
+    """T2: lunes 5/10 a las 22:30 UTC es martes 6/10 a las 00:30 en Madrid, y los DOS días
+    tienen tipo publicado: cierre, comisión y funding toman el del martes. (El test de B3 usa
+    el 1 de enero, sin tipo: UTC y Madrid caían en el mismo 31/12 y no lo distinguía.)"""
+    rec = CsvRecorder(tmp_path)
+    late = datetime(2026, 10, 5, 22, 30, tzinfo=UTC)
+    fill(rec, datetime(2026, 10, 5, 12, tzinfo=UTC), "buy", "1", "100", sym="PF_SOLUSD")
+    fill(rec, late, "sell", "1", "112", sym="PF_SOLUSD")
+    rec.fee({"timestamp": late, "symbol": "PF_SOLUSD", "fee": D("1.20"), "currency": "USD",
+             "info": "futures trade", "booking_uid": "fee"})
+    rec.funding(FundingEvent(late - timedelta(minutes=1), "PF_SOLUSD", D(1), D(1), D("-2.40"),
+                             "fund"), "live")
+    rates = ecb.parse_rates("TIME_PERIOD,OBS_VALUE\n2026-10-05,1.1600\n2026-10-06,1.2000\n",
+                            "p")
+    pos_path, fund_path, _, _ = export(tmp_path, 2026, tmp_path / "out", rates)
+    [p] = rows(pos_path)
+    assert (p["fecha_tipo_bce_cierre"], p["tipo_eurusd_bce_cierre"]) == ("2026-10-06", "1.2000")
+    assert (p["resultado_bruto_eur"], p["comisiones_eur"], p["funding_pagado_eur"]) == (
+        "10.00", "1.00", "2.00")  # 12 / 1.20, 1.20 / 1.20, 2.40 / 1.20
+    [f] = rows(fund_path)
+    assert f["fecha_tipo_bce"] == "2026-10-06"
+
+
 # --- B4: export atómico y funding contado una vez ---
 
 
