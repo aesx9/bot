@@ -74,3 +74,23 @@ def test_cli(data: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--data-dir", str(data), "--mode", "paper", "--json"]) == 0
     assert '"mode": "paper"' in capsys.readouterr().out
     assert "Drawdown" in format_text(build_report(data, "paper"))
+
+
+def test_live_report_does_not_ignore_eur_fees_nor_assume_usd(tmp_path: Path) -> None:
+    """Auditoría M4: las comisiones en EUR se descartaban y las sin moneda contaban como USD."""
+    rec = CsvRecorder(tmp_path)
+    trade(rec, "live", 0, "PF_A", "buy", "1", "100", "100", None)
+    rec.equity(T0, "live", D(10), None)
+    for uid, cur, fee in [("1", "USD", "0.70"), ("2", "EUR", "0.30"), ("3", "EUR", "0.20"),
+                          ("4", "", "5"), ("5", "XBT", "0.001")]:
+        rec.fee({"timestamp": T0, "symbol": "PF_A", "fee": D(fee), "currency": cur,
+                 "info": "futures trade", "booking_uid": uid})
+    r = build_report(tmp_path, "live")
+    assert r.total["comisiones_usd"] == "0.70"  # solo USD
+    assert r.total["comisiones_eur"] == "0.50"  # EUR aparte, sin convertir
+    assert r.by_asset["PF_A"]["comisiones_eur"] == "0.50"
+    assert any("EUR" in w and "NO están" in w for w in r.warnings)
+    assert any("DESCONOCIDA" in w and "5" in w for w in r.warnings)
+    assert any("XBT" in w for w in r.warnings)
+    text = format_text(r)
+    assert "Comisiones en EUR (sin convertir): 0.50" in text and "-- Avisos --" in text

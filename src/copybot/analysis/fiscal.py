@@ -212,7 +212,7 @@ def load_live_data(data_dir: Path) -> LiveData:
                           r.get("concepto"), r.get("booking_uid")),
         "fees.csv (por booking_uid)", notes)
     fees = [Fee(ts(r["timestamp_utc"]), r["mercado"], Decimal(r["comision"]),
-                (r.get("moneda") or "USD").upper()) for r in fee_rows]
+                (r.get("moneda") or "").upper()) for r in fee_rows]
     live_funding = _unique([r for r in read_rows(data_dir / "funding.csv")
                             if r.get("modo") == "live"], lambda r: r.get("booking_uid"),
                            "funding.csv (por booking_uid)", notes)
@@ -275,10 +275,12 @@ def assign(closed: list[Position], fees: list[Fee], funding: list[Funding]) -> l
             if f.used or f.symbol != p.symbol or not lo <= f.timestamp <= hi:
                 continue
             f.used = True
-            if f.currency in ("USD", "", "EUR"):
+            if f.currency in ("USD", "EUR"):
                 row.fees.append(f)
-            else:
-                row.warnings.append(f"comisión de {f.amount} {f.currency} sin convertir")
+            else:  # sin moneda o distinta de USD/EUR: nunca se supone USD
+                row.warnings.append(
+                    f"comisión de {f.amount} {f.currency or 'moneda desconocida'} sin "
+                    "convertir: no está en las comisiones de esta fila")
         # Un funding pertenece a la posición ABIERTA cuando se paga (sin margen de reloj:
         # a diferencia de las comisiones, no depende de casar un fill con su apunte) y solo
         # a una: en un cambio de dirección el cierre y la apertura comparten instante.

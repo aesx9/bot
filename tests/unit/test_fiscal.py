@@ -362,3 +362,22 @@ def test_position_snapshots_are_written_on_change_or_hourly(tmp_path: Path) -> N
            for r in rows(tmp_path / "positions.csv")]
     assert got == [("15:00", "PF_SOLUSD", "1"), ("15:30", "PF_SOLUSD", "2"),
                    ("17:00", "PF_SOLUSD", "2")]
+
+
+# --- M4: la moneda de las comisiones nunca se supone USD ---
+
+
+def test_fees_without_currency_or_in_other_currencies_are_not_counted_as_usd(
+        tmp_path: Path) -> None:
+    rec = CsvRecorder(tmp_path)
+    fill(rec, FRI, "buy", "1", "100", sym="PF_SOLUSD", fid="f1")
+    fill(rec, FRI + timedelta(hours=2), "sell", "1", "110", sym="PF_SOLUSD", fid="f2")
+    for i, cur in enumerate(["USD", "", "XBT", "DESCONOCIDA"]):
+        rec.fee({"timestamp": FRI + timedelta(minutes=i), "symbol": "PF_SOLUSD",
+                 "fee": D("1.00"), "currency": cur, "info": "futures trade",
+                 "booking_uid": f"u{i}"})
+    pos, _, _, _ = export(tmp_path, 2026, tmp_path / "out", RATES)
+    [p] = rows(pos)
+    assert p["comisiones_usd"] == "1.00"  # solo la que dice USD
+    assert p["avisos"].count("sin convertir") == 3
+    assert "XBT" in p["avisos"] and "moneda desconocida" in p["avisos"]

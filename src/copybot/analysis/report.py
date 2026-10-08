@@ -5,7 +5,9 @@ Uso: python -m copybot.analysis.report --data-dir data [--mode paper|live] [--js
 Fuentes (del directorio de datos del bot):
 - equity.csv: rentabilidad y drawdown máximo sobre el capital registrado.
 - trades.csv: PnL realizado (coste medio), slippage, comisiones (paper) y retraso.
-- fees.csv: comisiones reales (live, del log de cuenta de Kraken).
+- fees.csv: comisiones reales (live, del log de cuenta de Kraken), cada una en su
+  moneda: USD suma en "Comisiones (USD)", EUR se muestra aparte (sin convertir) y
+  cualquier otra, o sin moneda, no se suma y se avisa. Nada se da por USD a ciegas.
 - funding.csv: funding pagado, cobrado y neto.
 Los modos no se mezclan nunca: se elige uno (por defecto, live si hay datos live).
 """
@@ -31,6 +33,7 @@ class AssetStats:
     volume_usd: Decimal = ZERO
     realized_pnl_usd: Decimal = ZERO
     fees_usd: Decimal = ZERO
+    fees_eur: Decimal = ZERO
     funding_paid_usd: Decimal = ZERO
     funding_received_usd: Decimal = ZERO
     slippage_bps: list[Decimal] = field(default_factory=list)
@@ -46,6 +49,7 @@ class AssetStats:
             "volumen_usd": _q(self.volume_usd),
             "pnl_realizado_usd": _q(self.realized_pnl_usd),
             "comisiones_usd": _q(self.fees_usd),
+            "comisiones_eur": _q(self.fees_eur),
             "funding_pagado_usd": _q(self.funding_paid_usd),
             "funding_cobrado_usd": _q(self.funding_received_usd),
             "funding_neto_usd": _q(self.funding_net_usd),
@@ -65,6 +69,7 @@ class Report:
     max_drawdown_pct: Decimal | None
     total: dict[str, object]
     by_asset: dict[str, dict[str, object]]
+    warnings: list[str] = field(default_factory=list)
 
 
 def _q(v: Decimal | None, places: str = "0.01") -> str | None:
@@ -119,9 +124,22 @@ def build_report(data_dir: Path, mode: str) -> Report:
             weighted[r["mercado"]] = (w_sum + slip * size * price, w + size * price)
         if (delay := dec(r.get("retraso_s"))) is not None:
             a.delays_s.append(delay)
+    warnings: list[str] = []
+    other_fees: dict[str, Decimal] = defaultdict(lambda: ZERO)
     for f in fees:
-        if f.get("moneda", "USD") in ("USD", ""):
+        currency = (f.get("moneda") or "").upper()
+        if currency == "USD":
             per[f["mercado"]].fees_usd += Decimal(f["comision"])
+        elif currency == "EUR":
+            per[f["mercado"]].fees_eur += Decimal(f["comision"])
+        else:
+            other_fees[currency or "DESCONOCIDA"] += Decimal(f["comision"])
+    if any(a.fees_eur for a in per.values()):
+        warnings.append("hay comisiones en EUR: se muestran aparte y NO están en "
+                        "'Comisiones (USD)' (conviértelas con el export fiscal)")
+    for currency, amount in sorted(other_fees.items()):
+        warnings.append(f"comisiones en {currency} ({amount}) sin sumar: moneda distinta de "
+                        "USD y EUR; concílalas con el log de Kraken")
     for f in funding:
         a = per[f["mercado"]]
         a.funding_paid_usd += Decimal(f["pagado_usd"])
@@ -137,6 +155,7 @@ def build_report(data_dir: Path, mode: str) -> Report:
         total.volume_usd += a.volume_usd
         total.realized_pnl_usd += a.realized_pnl_usd
         total.fees_usd += a.fees_usd
+        total.fees_eur += a.fees_eur
         total.funding_paid_usd += a.funding_paid_usd
         total.funding_received_usd += a.funding_received_usd
         total.slippage_bps += a.slippage_bps
@@ -157,12 +176,14 @@ def build_report(data_dir: Path, mode: str) -> Report:
         max_drawdown_pct=max_drawdown_pct(values),
         total=with_weighted(total, tw),
         by_asset={s: with_weighted(a, weighted[s]) for s, a in sorted(per.items())},
+        warnings=warnings,
     )
 
 
 LABELS = {
     "operaciones": "Operaciones", "volumen_usd": "Volumen (USD)",
     "pnl_realizado_usd": "PnL realizado (USD)", "comisiones_usd": "Comisiones (USD)",
+    "comisiones_eur": "Comisiones en EUR (sin convertir)",
     "funding_pagado_usd": "Funding pagado (USD)", "funding_cobrado_usd": "Funding cobrado (USD)",
     "funding_neto_usd": "Funding neto (USD)", "slippage_medio_pb": "Slippage medio (pb)",
     "slippage_medio_ponderado_pb": "Slippage ponderado por nocional (pb)",
@@ -182,6 +203,8 @@ def format_text(r: Report) -> str:
     for sym, stats in r.by_asset.items():
         lines += ["", f"-- {sym} --"]
         lines += [f"  {LABELS[k]}: {show(v)}" for k, v in stats.items()]
+    if r.warnings:
+        lines += ["", "-- Avisos --"] + [f"  {w}" for w in r.warnings]
     return "\n".join(lines)
 
 

@@ -214,3 +214,70 @@ def test_ledger_csvs_do_not_duplicate_after_a_crash_between_write_and_commit(
         rec.kraken_fill(fill)  # y repetido en la misma ejecución
     for name, expected in (("kraken_fills.csv", 1), ("fees.csv", 2), ("funding.csv", 1)):
         assert len((tmp_path / name).read_text().splitlines()) == expected + 1, name
+
+
+# --- M4: moneda y signo de las entradas del log ---
+
+
+def funding_entry(ms: int, uid: str, **extra: Any) -> dict[str, Any]:
+    e = {"_ms": START_MS + ms,
+         "date": datetime.fromtimestamp((START_MS + ms) / 1000, tz=UTC).isoformat(),
+         "info": "funding rate change", "contract": "pf_xbtusd", "funding_rate": "0.5",
+         "old_balance": "100", "new_balance": "99.5", "realized_funding": "0",
+         "booking_uid": uid}
+    e.update(extra)
+    return {k: v for k, v in e.items() if v is not None}
+
+
+async def test_funding_in_another_currency_is_not_recorded_as_usd(env: Env) -> None:  # noqa: F811
+    """Auditoría M4: el funding se etiquetaba USD sin mirar `asset`: 0.001 XBT pasaba por
+    0.001 USD en funding.csv y falseaba el funding pagado/cobrado."""
+    await started(env)
+    env.kraken.logs = [
+        funding_entry(1000, "usd", asset="usd"),
+        funding_entry(2000, "xbt", asset="xbt", old_balance="0.01", new_balance="0.009"),
+        funding_entry(3000, "eur", asset="usd", collateral="EUR"),  # el colateral manda
+        funding_entry(4000, "none"),  # sin moneda: no se supone USD
+    ]
+    events = await env.live.collect_funding(NOW + timedelta(minutes=6))
+    assert [e.booking_uid for e in events] == ["usd"]
+    alerts = env.live.drain_alerts()
+    assert len(alerts) == 3 and all("MONEDA DEL FUNDING" in a for a in alerts)
+    assert any("XBT" in a and "-0.001" in a and "xbt" in a for a in alerts)
+    assert any("EUR" in a for a in alerts) and any("DESCONOCIDA" in a for a in alerts)
+
+
+async def test_fee_currency_is_recorded_and_never_assumed_usd(env: Env) -> None:  # noqa: F811
+    await started(env)
+    env.kraken.logs = [
+        {**fee_at(1000, "usd"), "collateral": "USD"},
+        {**fee_at(2000, "eur"), "collateral": "EUR"},
+        {**fee_at(3000, "xbt"), "collateral": None, "asset": "xbt"},
+        {**fee_at(4000, "none"), "collateral": None},
+    ]
+    await env.live.collect_funding(NOW + timedelta(minutes=6))
+    _, fees = env.live.drain_ledger()
+    assert {f["booking_uid"]: f["currency"] for f in fees} == {
+        "usd": "USD", "eur": "EUR", "xbt": "XBT", "none": "DESCONOCIDA"}
+    alerts = env.live.drain_alerts()
+    # EUR lo convierte el export fiscal: sin alerta; XBT y desconocida sí la llevan
+    assert len(alerts) == 2 and all("MONEDA DE LA COMISIÓN" in a for a in alerts)
+    assert any("XBT" in a for a in alerts) and any("DESCONOCIDA" in a for a in alerts)
+
+
+async def test_negative_or_inverted_fee_sign_alerts_and_the_value_is_kept(
+        env: Env) -> None:  # noqa: F811
+    await started(env)
+    env.kraken.logs = [
+        {**fee_at(1000, "ok"), "old_balance": "10", "new_balance": "9.9"},  # baja lo que cobra
+        {**fee_at(2000, "neg"), "fee": "-0.1"},  # comisión negativa
+        {**fee_at(3000, "inv"), "old_balance": "10", "new_balance": "10.1"},  # el saldo sube
+        {**fee_at(4000, "pnl"), "old_balance": "10", "new_balance": "10.4",
+         "realized_pnl": "0.5"},  # 10.4 = 10 + 0.5 - 0.1: correcto
+    ]
+    await env.live.collect_funding(NOW + timedelta(minutes=6))
+    alerts = env.live.drain_alerts()
+    assert len(alerts) == 2 and all("SIGNO DE LA COMISIÓN" in a for a in alerts)
+    assert any("'neg'" in a for a in alerts) and any("'inv'" in a for a in alerts)
+    _, fees = env.live.drain_ledger()
+    assert {f["booking_uid"]: f["fee"] for f in fees}["neg"] == D("-0.1")  # tal cual llega

@@ -128,6 +128,17 @@ def _log_ms(e: Mapping[str, Any]) -> int | None:
         return None
 
 
+UNKNOWN_CURRENCY = "DESCONOCIDA"
+CONVERTIBLE = ("USD", "EUR")  # el export fiscal convierte EUR con el tipo del BCE
+
+
+def _currency(e: Mapping[str, Any]) -> str:
+    """Moneda en la que están el saldo, la comisión y el funding de una entrada del log:
+    el colateral (cuentas multi-colateral) o, si falta, el activo. Vacía si no consta:
+    nunca se supone USD."""
+    return str(e.get("collateral") or e.get("asset") or "").upper()
+
+
 def _log_uid(e: Mapping[str, Any]) -> str:
     """Identificador de una entrada del log: booking_uid o, si falta, una clave compuesta."""
     uid = str(e.get("booking_uid") or "")
@@ -380,22 +391,58 @@ class LiveExchange:
         if ts.tzinfo is None:
             raise ValueError("fecha sin zona horaria")
         symbol = str(e.get("contract") or "").upper()
+        currency = _currency(e)
         if e.get("info") == "funding rate change":
-            events.append(self._funding_event(e, ts, symbol))
+            event = self._funding_event(e, ts, symbol, currency)
+            if event is not None:
+                events.append(event)
         elif e.get("fee") is not None:
+            fee = _dec(e["fee"], "comisión")
+            self._check_fee(e, symbol, fee, currency)
             staged.fees.append({
-                "timestamp": ts, "symbol": symbol, "fee": _dec(e["fee"], "comisión"),
-                "currency": str(e.get("collateral") or e.get("asset") or "").upper(),
+                "timestamp": ts, "symbol": symbol, "fee": fee,
+                "currency": currency or UNKNOWN_CURRENCY,
                 "info": str(e.get("info")), "booking_uid": str(e.get("booking_uid") or ""),
             })
 
-    def _funding_event(self, e: Mapping[str, Any], ts: datetime, symbol: str) -> FundingEvent:
+    def _check_fee(self, e: Mapping[str, Any], symbol: str, fee: Decimal, currency: str) -> None:
+        """Moneda y signo de una comisión del log. Se registra tal cual llega (con su moneda
+        real, nunca etiquetada USD a ciegas) y se avisa de lo que el libro no puede
+        interpretar con seguridad."""
+        if currency not in CONVERTIBLE:
+            self.alerts.append(
+                f"MONEDA DE LA COMISIÓN: {symbol} {fee} {currency or UNKNOWN_CURRENCY} "
+                f"[booking_uid={e.get('booking_uid')!r}]: no es USD ni EUR; se registra con su "
+                "moneda, el export fiscal no la convierte (concílala a mano)")
+        problems = []
+        if fee < 0:
+            problems.append(f"comisión negativa ({fee})")
+        elif fee > 0 and e.get("old_balance") is not None and e.get("new_balance") is not None:
+            delta = _dec(e["new_balance"], "comisión") - _dec(e["old_balance"], "comisión")
+            pnl = _dec(e.get("realized_pnl") or 0, "comisión")
+            if delta == pnl + fee:  # el saldo SUBE justo lo que dice la comisión
+                problems.append(f"comisión {fee} pero el saldo sube {delta} (¿signo invertido?)")
+        if problems:
+            self.alerts.extend(
+                f"SIGNO DE LA COMISIÓN: {symbol}: {p} [booking_uid={e.get('booking_uid')!r}]. "
+                "Se registra tal cual; revisa fees.csv" for p in problems)
+
+    def _funding_event(self, e: Mapping[str, Any], ts: datetime, symbol: str,
+                       currency: str) -> FundingEvent | None:
         rate = _dec(e.get("funding_rate") or 0, "funding")
         realized = _dec(e.get("realized_funding") or 0, "funding")
         if e.get("old_balance") is not None and e.get("new_balance") is not None:
             amount = _dec(e["new_balance"], "funding") - _dec(e["old_balance"], "funding")
         else:
             amount = realized
+        if currency != "USD":
+            # funding.csv guarda USD: etiquetar así un importe en otra moneda falsearía el
+            # funding pagado/cobrado. No se registra y se avisa con todos los datos.
+            self.alerts.append(
+                f"MONEDA DEL FUNDING: {symbol} {amount} {currency or UNKNOWN_CURRENCY} el "
+                f"{_iso_ms(ts)} [booking_uid={e.get('booking_uid')!r}]: no es USD; NO se "
+                "registra en funding.csv (concílialo a mano con el log de Kraken)")
+            return None
         position = self._positions.get(symbol, ZERO)
         self._check_funding_sign(symbol, position, rate, amount, realized)
         return FundingEvent(ts, symbol, position, rate, amount, booking_uid=_log_uid(e))
