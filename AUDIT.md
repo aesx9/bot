@@ -62,7 +62,7 @@
 | B5 | Baja | `PaperAccount.orders` crece sin límite | (lectura) | pendiente (documentado) |
 | B6 | Baja | Telegram: dedupe también de críticas; `InvalidURL` sin capturar | (lectura) | resuelto (`b769bfa`) |
 | B7 | Baja | `pip --upgrade pip` sin hash; sin backups | (lectura) | resuelto (`9f67fb0`) |
-| B8 | Baja | Fila duplicada en `trades.csv` tras caída | (lectura) | pendiente |
+| B8 | Baja | Fila duplicada en `trades.csv` tras caída | (lectura) | resuelto (`90b9140`) |
 | B9 | Baja | Posible desfase de `/openpositions` tras un fill | (no verificable) | pendiente (documentado) |
 
 Gravedad crítica: ninguna. El perfil de arranque (1x, 100 USD por activo) acota
@@ -311,9 +311,10 @@ El dedupe por texto también silencia alertas CRÍTICAS repetidas y
 - **Regresión:** tests/unit/test_deploy.py::test_setup_does_not_upgrade_pip_without_a_hash, ::test_setup_installs_the_backup_job, ::test_backup_contains_state_and_csv_but_never_secrets_logs_or_lock, ::test_backup_keeps_only_the_latest_and_leaves_no_temp_files, ::test_backup_with_nothing_to_copy_is_not_an_error
 
 ### B8 — Fila duplicada en `trades.csv`
-**Gravedad:** baja · **Estado:** pendiente
+**Gravedad:** baja · **Estado:** resuelto en `90b9140`
 
 Una caída entre escribir la fila y guardar el estado la duplica al reconciliar.
+- **Regresión:** tests/unit/test_records.py::test_trade_rows_are_idempotent_by_client_order_id; test_executor.py::test_crash_between_csv_row_and_state_save_does_not_duplicate_the_trade
 
 ### B9 — Desfase de `/openpositions` tras un fill
 **Gravedad:** baja · **Estado:** pendiente (documentado)
