@@ -56,7 +56,7 @@
 | M13 | Media | Tras un HALT las posiciones quedan con stops laxos | (lectura) | resuelto (`6efcace`) |
 | M14 | Media | Lagunas de tests (mutaciones supervivientes) | mutación | resuelto (`0c8d487`) |
 | B1 | Baja | `config.toml` no ignorado; pre-commit voluntario; sin CI | (lectura) | resuelto (`dbc9c96`) |
-| B2 | Baja | `Authorization: Bearer x` deja el token | (lectura) | pendiente |
+| B2 | Baja | `Authorization: Bearer x` deja el token | (lectura) | resuelto (`8094e83`) |
 | B3 | Baja | Año fiscal y día BCE en UTC en vez de Madrid | (lectura) | pendiente |
 | B4 | Baja | Export no atómico; funding asignable a dos posiciones | (lectura) | pendiente |
 | B5 | Baja | `PaperAccount.orders` crece sin límite | (lectura) | pendiente (documentado) |
@@ -271,10 +271,11 @@ httpx; deduplicación de alertas. No hay test de integración del kill switch li
 - **Regresión:** tests/unit/test_repo_hygiene.py (4 tests)
 
 ### B2 — Redacción de `Authorization: Bearer`
-**Gravedad:** baja · **Estado:** pendiente
+**Gravedad:** baja · **Estado:** resuelto en `8094e83`
 
 Solo se enmascara "Bearer" y el token queda en claro (latente: Kraken y Telegram
 no usan ese esquema).
+- **Regresión:** tests/unit/test_credentials_logging.py::test_authorization_schemes_hide_the_whole_token
 
 ### B3 — Año fiscal y día BCE en UTC
 **Gravedad:** baja · **Estado:** pendiente
