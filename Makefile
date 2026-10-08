@@ -12,7 +12,6 @@ lock:
 
 install:
 	$(PY) -m pip install --require-hashes --no-deps -r requirements.lock -r requirements-dev.lock
-	$(PY) -m pip install --no-deps --no-build-isolation -e .
 
 lint:
 	$(PY) -m ruff check src tests scripts

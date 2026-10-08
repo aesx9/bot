@@ -1,0 +1,65 @@
+# Copia a config.toml y ajusta. Sin secretos aquí: las claves van en .env.
+# Los topes absolutos (src/copybot/limits.py) no se pueden superar desde aquí.
+
+mode = "paper"                       # "paper" | "live"
+leader_address = "0x0000000000000000000000000000000000000000"
+
+[sizing]
+mode = "equity"                      # "equity" | "fixed"
+multiplier = 1.0                     # solo modo equity
+fixed_ratio = 0.01                   # solo modo fixed: mis unidades = líder x ratio
+max_asset_usd = 600                  # tope absoluto: 600
+max_asset_pct_equity = 25            # % de mi capital por activo
+max_total_leverage = 2               # tope absoluto: 3
+
+[planner]
+min_order_usd = 10
+rebalance_threshold_pct = 5
+
+[execution]
+slippage_cap_pct = 0.5               # límite IOC; tope absoluto: 0.5
+
+[filters]
+allow = []                           # vacío = todos
+deny = []
+ignore_preexisting = true
+
+[symbols.overrides]
+# kPEPE = "PF_PEPEUSD"
+
+[symbols.size_factor]
+# kPEPE = 1000
+
+[risk]
+max_drawdown_pct = 15                # tope absoluto: 15
+close_all_on_drawdown = true
+max_orders_per_minute = 10           # tope absoluto: 10
+max_notional_per_hour_usd = 2000     # tope absoluto: 2000
+max_consecutive_errors = 5           # tope absoluto: 5
+catastrophe_stop_enabled = true      # solo live
+catastrophe_stop_pct = 20
+
+[timing]
+debounce_seconds = 2
+reconcile_interval_seconds = 60
+leader_stale_seconds = 30
+heartbeat_seconds = 300
+equity_snapshot_seconds = 900
+ws_backoff_initial_seconds = 1
+ws_backoff_max_seconds = 60
+
+[sanity]
+max_position_jump_factor = 20
+max_equity_jump_pct = 50
+
+[paper]
+initial_equity_usd = 540
+taker_fee_pct = 0.05                 # pendiente de verificar (fase 4)
+simulate_funding = true
+simulate_orderbook_slippage = true
+
+[telegram]
+enabled = false
+
+[paths]
+data_dir = "data"
