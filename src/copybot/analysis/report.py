@@ -8,7 +8,9 @@ Fuentes (del directorio de datos del bot):
 - fees.csv: comisiones reales (live, del log de cuenta de Kraken), cada una en su
   moneda: USD suma en "Comisiones (USD)", EUR se muestra aparte (sin convertir) y
   cualquier otra, o sin moneda, no se suma y se avisa. Nada se da por USD a ciegas.
-- funding.csv: funding pagado, cobrado y neto.
+- funding.csv: funding pagado, cobrado y neto (USD).
+- funding_moneda.csv: funding live que no es USD, con su moneda; como las comisiones, EUR se
+  muestra aparte (sin convertir) y cualquier otra moneda, o sin moneda, no se suma y se avisa.
 Los modos no se mezclan nunca: se elige uno (por defecto, live si hay datos live).
 """
 
@@ -36,6 +38,8 @@ class AssetStats:
     fees_eur: Decimal = ZERO
     funding_paid_usd: Decimal = ZERO
     funding_received_usd: Decimal = ZERO
+    funding_paid_eur: Decimal = ZERO
+    funding_received_eur: Decimal = ZERO
     slippage_bps: list[Decimal] = field(default_factory=list)
     delays_s: list[Decimal] = field(default_factory=list)
 
@@ -53,6 +57,8 @@ class AssetStats:
             "funding_pagado_usd": _q(self.funding_paid_usd),
             "funding_cobrado_usd": _q(self.funding_received_usd),
             "funding_neto_usd": _q(self.funding_net_usd),
+            "funding_pagado_eur": _q(self.funding_paid_eur),
+            "funding_cobrado_eur": _q(self.funding_received_eur),
             "slippage_medio_pb": _mean(self.slippage_bps),
             "slippage_medio_ponderado_pb": None,
             "retraso_medio_s": _mean(self.delays_s),
@@ -97,7 +103,7 @@ def max_drawdown_pct(series: Sequence[Decimal]) -> Decimal | None:
 
 def available_modes(data_dir: Path) -> set[str]:
     modes: set[str] = set()
-    for name in ("trades.csv", "equity.csv", "funding.csv"):
+    for name in ("trades.csv", "equity.csv", "funding.csv", "funding_moneda.csv"):
         modes |= {r.get("modo", "") for r in read_rows(data_dir / name)}
     return modes - {""}
 
@@ -106,6 +112,7 @@ def build_report(data_dir: Path, mode: str) -> Report:
     trades = [r for r in read_rows(data_dir / "trades.csv") if r["modo"] == mode]
     equity = [r for r in read_rows(data_dir / "equity.csv") if r["modo"] == mode]
     funding = [r for r in read_rows(data_dir / "funding.csv") if r["modo"] == mode]
+    other_funding = [r for r in read_rows(data_dir / "funding_moneda.csv") if r["modo"] == mode]
     # fees.csv solo existe en live (comisiones reales del log de cuenta)
     fees = read_rows(data_dir / "fees.csv") if mode == "live" else []
 
@@ -144,6 +151,21 @@ def build_report(data_dir: Path, mode: str) -> Report:
         a = per[f["mercado"]]
         a.funding_paid_usd += Decimal(f["pagado_usd"])
         a.funding_received_usd += Decimal(f["cobrado_usd"])
+    unsummed_funding: dict[str, Decimal] = defaultdict(lambda: ZERO)
+    for f in other_funding:
+        currency = (f.get("moneda") or "").upper()
+        if currency == "EUR":
+            a = per[f["mercado"]]
+            a.funding_paid_eur += Decimal(f["pagado"])
+            a.funding_received_eur += Decimal(f["cobrado"])
+        else:
+            unsummed_funding[currency or "DESCONOCIDA"] += Decimal(f["importe"])
+    if any(a.funding_paid_eur or a.funding_received_eur for a in per.values()):
+        warnings.append("hay funding en EUR: se muestra aparte y NO está en el funding en USD "
+                        "(conviértelo con el export fiscal)")
+    for currency, amount in sorted(unsummed_funding.items()):
+        warnings.append(f"funding en {currency} ({amount}) sin sumar: moneda distinta de USD y "
+                        "EUR; concílialo con el log de Kraken")
     closed, open_ = reconstruct(fills_from_rows(trades, price_key="precio_propio"))
     for p in [*closed, *open_.values()]:
         per[p.symbol].realized_pnl_usd += p.realized_usd
@@ -158,6 +180,8 @@ def build_report(data_dir: Path, mode: str) -> Report:
         total.fees_eur += a.fees_eur
         total.funding_paid_usd += a.funding_paid_usd
         total.funding_received_usd += a.funding_received_usd
+        total.funding_paid_eur += a.funding_paid_eur
+        total.funding_received_eur += a.funding_received_eur
         total.slippage_bps += a.slippage_bps
         total.delays_s += a.delays_s
         tw = (tw[0] + weighted[sym][0], tw[1] + weighted[sym][1])
@@ -185,7 +209,10 @@ LABELS = {
     "pnl_realizado_usd": "PnL realizado (USD)", "comisiones_usd": "Comisiones (USD)",
     "comisiones_eur": "Comisiones en EUR (sin convertir)",
     "funding_pagado_usd": "Funding pagado (USD)", "funding_cobrado_usd": "Funding cobrado (USD)",
-    "funding_neto_usd": "Funding neto (USD)", "slippage_medio_pb": "Slippage medio (pb)",
+    "funding_neto_usd": "Funding neto (USD)",
+    "funding_pagado_eur": "Funding pagado en EUR (sin convertir)",
+    "funding_cobrado_eur": "Funding cobrado en EUR (sin convertir)",
+    "slippage_medio_pb": "Slippage medio (pb)",
     "slippage_medio_ponderado_pb": "Slippage ponderado por nocional (pb)",
     "retraso_medio_s": "Retraso medio (s)", "retraso_mediano_s": "Retraso mediano (s)",
 }

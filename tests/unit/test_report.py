@@ -94,3 +94,22 @@ def test_live_report_does_not_ignore_eur_fees_nor_assume_usd(tmp_path: Path) -> 
     assert any("XBT" in w for w in r.warnings)
     text = format_text(r)
     assert "Comisiones en EUR (sin convertir): 0.50" in text and "-- Avisos --" in text
+
+
+def test_live_report_includes_funding_in_other_currencies(tmp_path: Path) -> None:
+    """Revisión de N4: report.py solo leía funding.csv; el funding en EUR (funding_moneda.csv)
+    no aparecía. EUR se muestra aparte, sin convertir; otra moneda no se suma y se avisa."""
+    rec = CsvRecorder(tmp_path)
+    trade(rec, "live", 0, "PF_A", "buy", "1", "100", "100", None)
+    rec.equity(T0, "live", D(10), None)
+    rec.funding(FundingEvent(T0, "PF_A", D(1), D("0.1"), D("-1"), "u1"), "live")
+    for uid, cur, amount in [("e1", "EUR", "-0.40"), ("e2", "EUR", "0.15"),
+                             ("x1", "DESCONOCIDA", "-3")]:
+        rec.funding(FundingEvent(T0, "PF_A", D(1), D("0.1"), D(amount), uid, cur), "live")
+    r = build_report(tmp_path, "live")
+    assert r.total["funding_pagado_usd"] == "1.00"  # solo USD
+    assert r.total["funding_pagado_eur"] == "0.40" and r.total["funding_cobrado_eur"] == "0.15"
+    assert r.by_asset["PF_A"]["funding_pagado_eur"] == "0.40"
+    assert any("funding en EUR" in w and "NO está" in w for w in r.warnings)
+    assert any("DESCONOCIDA" in w and "-3" in w for w in r.warnings)
+    assert "Funding pagado en EUR (sin convertir): 0.40" in format_text(r)
