@@ -44,7 +44,7 @@ class TradeRecord:
     leader_price: Decimal | None
     ref_price: Decimal
     fill_price: Decimal
-    fee_usd: Decimal
+    fee_usd: Decimal | None
     delay_seconds: Decimal | None
     cli_ord_id: str
     status: str

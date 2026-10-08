@@ -41,7 +41,7 @@ class OrderResult:
     status: OrderStatus
     filled_size: Decimal
     avg_price: Decimal | None
-    fee_usd: Decimal
+    fee_usd: Decimal | None  # None = desconocida al enviar (live: sale del log de cuenta)
     reason: str = ""
 
 

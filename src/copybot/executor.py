@@ -26,7 +26,7 @@ import asyncio
 import logging
 import uuid
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from typing import Any
@@ -213,6 +213,8 @@ class Executor:
             ) from exc
         if found is None:
             raise OrderUncertain(f"orden {req.cli_ord_id} sin confirmar tras el error")
+        if found.status is OrderStatus.FILLED and found.filled_size < req.size:
+            found = replace(found, status=OrderStatus.PARTIAL)
         return found
 
     def _record(self, info: Mapping[str, Any], result: OrderResult) -> None:
