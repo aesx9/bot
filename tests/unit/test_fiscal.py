@@ -143,3 +143,29 @@ def test_summary_by_closing_origin(tmp_path: Path) -> None:
     fy = s["funding total del año (fiscal_funding)"]
     assert (fy["funding_pagado_usd"], fy["funding_pagado_eur"]) == ("1.16", "1.00")
     assert all("BCE" in r["fuente_tipo_cambio"] for r in s.values())
+
+
+# --- M14: reglas fiscales que las mutaciones dejaron sin cubrir ---
+
+RATES_YEAR_END = ecb.parse_rates(
+    "TIME_PERIOD,OBS_VALUE\n2025-12-30,1.1700\n2026-01-02,1.1800\n2026-01-05,1.1900\n", "prueba")
+
+
+def test_a_position_belongs_to_the_year_it_was_closed_not_opened(tmp_path: Path) -> None:
+    rec = CsvRecorder(tmp_path)
+    fill(rec, datetime(2025, 12, 30, 12, tzinfo=UTC), "buy", "1", "100", sym="PF_SOLUSD")
+    fill(rec, datetime(2026, 1, 2, 12, tzinfo=UTC), "sell", "1", "110", sym="PF_SOLUSD")
+    assert len(rows(export(tmp_path, 2026, tmp_path / "a", RATES_YEAR_END)[0])) == 1
+    assert rows(export(tmp_path, 2025, tmp_path / "b", RATES_YEAR_END)[0]) == []
+
+
+def test_each_funding_in_a_position_uses_the_rate_of_its_payment_day(tmp_path: Path) -> None:
+    """Pagado el viernes 2 (1,165) con la posición cerrada el lunes 5 (1,16)."""
+    rec = CsvRecorder(tmp_path)
+    fill(rec, FRI, "buy", "1", "100", sym="PF_SOLUSD")
+    fill(rec, FRI + timedelta(days=3), "sell", "1", "100", sym="PF_SOLUSD")
+    rec.funding(FundingEvent(FRI + timedelta(hours=1), "PF_SOLUSD", D(1), D(1), D("-2.33")),
+                "live")
+    [p] = rows(export(tmp_path, 2026, tmp_path, RATES)[0])
+    assert p["funding_pagado_eur"] == "2.00"  # 2.33 / 1.165; con el tipo del cierre sería 2.01
+    assert p["fecha_tipo_bce_cierre"] == "2026-10-05"

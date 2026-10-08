@@ -571,3 +571,11 @@ async def test_catastrophe_stop_distance_comes_from_drawdown_and_leverage(
     await engine.cycle()
     [stop] = env.kraken.open_orders
     assert D(stop["stopPrice"]) == D(85)
+
+
+async def test_partial_ioc_execution_is_reported_as_partial(env: Env) -> None:
+    """Una ejecución parcial marcada como FILLED haría que un cambio de dirección abriera el
+    lado nuevo con el viejo a medio cerrar."""
+    env.kraken.fill_fraction = D("0.4")
+    r = await env.live.send_order(req(size="5"))
+    assert (r.status, r.filled_size) == (OrderStatus.PARTIAL, D(2))

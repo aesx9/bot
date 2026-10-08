@@ -56,6 +56,7 @@ class FakeKraken:
         self._fill_seq = 0
         # El exchange no admite dos stops reduceOnly sobre la misma posición (hipótesis)
         self.one_stop_per_symbol = False
+        self.fill_fraction = Decimal(1)  # <1: la IOC se ejecuta solo en parte
         self.fail_paths: set[str] = set()  # rutas que responden 503 (inyección de fallos)
 
     # --- utilidades ---
@@ -133,12 +134,12 @@ class FakeKraken:
                 {"type": "REJECT", "uid": "u", "order": None, "reason": "IOC_WOULD_NOT_EXECUTE"}]})
         if self.ioc_mode != "fill":
             return _ok(sendStatus={"status": self.ioc_mode})
-        size = Decimal(p["size"])
+        size = Decimal(p["size"]) * self.fill_fraction
         self._apply(p["symbol"], size if p["side"] == "buy" else -size)
         self._fill_seq += 1
         self.fills.append({"cliOrdId": p["cliOrdId"], "fillTime": SERVER_TIME,
                            "fillType": "taker", "fill_id": f"f{self._fill_seq}", "order_id": "o",
-                           "price": str(self.fill_price), "side": p["side"], "size": p["size"],
+                           "price": str(self.fill_price), "side": p["side"], "size": str(size),
                            "symbol": p["symbol"]})
         if self.lose_response:
             raise httpx.ReadTimeout("respuesta perdida")

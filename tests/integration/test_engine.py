@@ -444,3 +444,40 @@ async def test_size_factor_makes_a_scaled_asset_coherent(tmp_path: Path) -> None
                symbols={"overrides": {"kPEPE": "PF_PEPEUSD"}, "size_factor": {"kPEPE": 1000}})
     await w2.cycle()
     assert set(await w2.positions()) == {"PF_PEPEUSD"}
+
+
+# --- M14: lagunas de cobertura ---
+
+
+async def test_rejected_orders_count_as_a_cycle_error_and_five_halt(tmp_path: Path) -> None:
+    from copybot.exchange.base import OrderResult, OrderStatus
+
+    w = World(tmp_path, FakeLeader("100000", BTC="1"))
+
+    async def reject(req):  # type: ignore[no-untyped-def]
+        return OrderResult(req.cli_ord_id, OrderStatus.REJECTED, D(0), None, D(0), "invalidSize")
+
+    w.exchange.send_order = reject  # type: ignore[method-assign]
+    outcomes = [await w.cycle() for _ in range(5)]
+    assert outcomes == [Outcome.ERROR] * 4 + [Outcome.HALTED]
+    assert await w.positions() == {}
+
+
+async def test_suspended_market_blocks_the_cycle_without_orders(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    w = World(tmp_path, FakeLeader("100000", BTC="1"))
+    sent: list[str] = []
+    original = w.exchange.send_order
+
+    async def spy(req):  # type: ignore[no-untyped-def]
+        sent.append(req.cli_ord_id)
+        return await original(req)
+
+    w.exchange.send_order = spy  # type: ignore[method-assign]
+    w.market.ticker_map[BTC] = replace(w.market.ticker_map[BTC], suspended=True)
+    assert await w.cycle() is Outcome.ERROR
+    assert sent == [] and await w.positions() == {}  # ni se intenta enviar (no basta con que falle)
+    w.market.ticker_map[BTC] = replace(w.market.ticker_map[BTC], suspended=False)
+    assert await w.cycle() is Outcome.OK
+    assert set(await w.positions()) == {BTC}

@@ -52,6 +52,8 @@ class FlakyExchange(PaperExchange):
         result = await super().send_order(req)
         if self.send_mode == "timeout_after":
             raise ExchangeError("respuesta perdida")  # llegó al exchange, la respuesta no
+        if self.send_mode == "oserror_after":
+            raise OSError("conexión reiniciada")  # idem, con un error de socket
         return result
 
     async def find_order(self, cli_ord_id: str) -> OrderResult | None:
@@ -60,8 +62,9 @@ class FlakyExchange(PaperExchange):
         return await super().find_order(cli_ord_id)
 
 
-def setup(tmp_path: Path, **risk: Any) -> tuple[Executor, FlakyExchange, BotState, StateStore,
-                                                 FakeMarket, dict[str, Any]]:
+def setup(
+    tmp_path: Path, execution: ExecutionConfig | None = None, **risk: Any
+) -> tuple[Executor, FlakyExchange, BotState, StateStore, FakeMarket, dict[str, Any]]:
     market = FakeMarket()
     market.set_mark(SOL, "100")
     clock = {"now": NOW}
@@ -74,7 +77,7 @@ def setup(tmp_path: Path, **risk: Any) -> tuple[Executor, FlakyExchange, BotStat
     store.save(state)
     breaker = CircuitBreaker(state, RiskConfig(**risk), clock=lambda: clock["now"].timestamp())
     execu = Executor(exchange=ex, store=store, state=state, breaker=breaker,
-                     recorder=CsvRecorder(tmp_path), cfg=ExecutionConfig(),
+                     recorder=CsvRecorder(tmp_path), cfg=execution or ExecutionConfig(),
                      now=lambda: clock["now"], pending_grace_seconds=60)
     return execu, ex, state, store, market, clock
 
@@ -281,3 +284,38 @@ async def test_reductions_and_closes_are_never_blocked_by_the_guard(tmp_path: Pa
         [act(ActionKind.REDUCE, Side.SELL, "1", True), act(ActionKind.CLOSE, Side.SELL, "2", True)],
         {SOL: D(3)}, exposure=limits_for("1", "1"))
     assert report.skipped == 0 and await ex.positions() == {}
+
+
+
+# --- M14: lagunas que dejaron vivas las mutaciones ---
+
+
+async def test_limit_price_uses_the_configured_cap_and_never_more_than_the_hard_one(
+    tmp_path: Path,
+) -> None:
+    """Una mutación x100 del tope de slippage pasaba toda la suite: la config no llegaba a
+    la orden realmente enviada."""
+    for i, (cfg, expected) in enumerate([
+            (ExecutionConfig(), "100.50"),
+            (ExecutionConfig(slippage_cap_pct=D("0.2")), "100.20"),
+            (ExecutionConfig.model_construct(slippage_cap_pct=D("50")), "100.50")]):
+        execu, ex, _, _, market, _ = setup(tmp_path / str(i), execution=cfg)
+        sent: list[OrderRequest] = []
+        original = ex.send_order
+
+        async def spy(req: OrderRequest, original: Any = original, sent: Any = sent
+                      ) -> OrderResult:
+            sent.append(req)
+            return await original(req)
+
+        ex.send_order = spy  # type: ignore[method-assign]
+        await run(execu, market, [act(ActionKind.OPEN, Side.BUY, "1")])
+        assert sent[0].limit_price == D(expected), cfg.slippage_cap_pct
+
+
+async def test_oserror_after_the_order_reached_the_exchange_is_reconciled(tmp_path: Path) -> None:
+    execu, ex, state, _, market, _ = setup(tmp_path)
+    ex.send_mode = "oserror_after"
+    [r] = await run(execu, market, [act(ActionKind.OPEN, Side.BUY, "2")])
+    assert r.status is OrderStatus.FILLED and len(ex.sent) == 1  # no se reenvió
+    assert await ex.positions() == {SOL: D(2)} and state.pending_orders == {}
