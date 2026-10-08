@@ -60,6 +60,35 @@ async def test_failure_while_handling_the_error_does_not_escape_cycle(
     assert outcomes[:4] == [Outcome.ERROR] * 4 and outcomes[4] is Outcome.HALTED
 
 
+async def test_unexpected_exception_in_trading_is_alerted_and_persisted(
+    tmp_path: Path,
+) -> None:
+    """T1 (capa interna): una excepción imprevista al operar la trata _cycle como cualquier
+    error de ciclo: alerta y estado guardado con el contador. Si solo la recogiera la capa
+    externa (_last_resort) no habría ni alerta ni guardado."""
+    w = World(tmp_path, FakeLeader("100000", BTC="1"))
+    w.leader.fail = RuntimeError("imprevisto")
+    assert await w.cycle() is Outcome.ERROR
+    assert any("ciclo con error" in t and "RuntimeError" in t for _, t in w.alerts.sent)
+    assert w.store.load().consecutive_errors == 1
+
+
+async def test_exception_outside_the_trading_block_does_not_escape_cycle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T1 (capa externa): lo que falle fuera del bloque protegido de _cycle (aquí, mirar el
+    fichero STOP) tampoco sale de Engine.cycle(): cuenta como error y 5 detienen."""
+    import copybot.engine as engine_mod
+
+    def broken(_: object) -> None:
+        raise PermissionError("STOP ilegible")
+
+    monkeypatch.setattr(engine_mod, "kill_switch_active", broken)
+    w = World(tmp_path, FakeLeader("100000", BTC="1"))
+    outcomes = [await w.cycle() for _ in range(5)]
+    assert outcomes == [Outcome.ERROR] * 4 + [Outcome.HALTED]
+
+
 async def test_run_forever_keeps_cycling_and_halts_after_unexpected_exceptions(
     tmp_path: Path,
 ) -> None:
