@@ -288,3 +288,38 @@ pública real:
   1.100 USD de nocional; entre 8 posiciones salen unos 137 USD por posición,
   que coincide con el tope por activo del 25 %, y todas superan con holgura
   el mínimo de 10 USD.
+
+## Fase 5 (verificación de la API privada, 2026-10-08)
+- **Firma:** `Authent = base64(HMAC-SHA512(base64dec(secret),
+  SHA256(postData + nonce + endpointPath)))`, con `endpointPath` = la ruta
+  sin `/derivatives`. Se firma el cuerpo form-urlencoded (POST) o la query
+  (GET) tal como se envían. Contrastado con el SDK oficial `krakenfx/api-go`.
+  El secreto de ejemplo de la documentación no es base64 válido, así que los
+  tests usan uno propio y un vector fijo de regresión.
+- **Capital live:** según la documentación, `accounts.flex.portfolioValue` es
+  saldo + PnL SIN haircut. El que incluye haircut y PnL es `marginEquity`
+  ("[Balance Value in USD * (1-Haircut)] + unrealised PnL as margin"). El bot
+  usa `marginEquity`. El propio ejemplo de la documentación muestra un
+  haircut de alrededor del 2,2 % en EUR (4999,14 de valor frente a 4886,91
+  de colateral).
+- **Permisos de la clave:** `GET /api/auth/v1/api-keys/v3/check` devuelve
+  `permissions.general` y `permissions.transfer` con los valores exhaustivos
+  NO_ACCESS, READ_ONLY o FULL_ACCESS, más `allowedCidrBlocks`. `--check` exige
+  general = FULL_ACCESS y transfer = NO_ACCESS. Si la respuesta no permite
+  saberlo, exige restricción de IP y una confirmación escrita.
+- **Reconciliación:** `orders/status` solo informa de órdenes abiertas o
+  cerradas en los últimos 5 segundos. La fuente principal es `/fills` (los
+  últimos 100, con `cliOrdId`).
+- **Comisión real:** no viene en la respuesta de `sendorder`. En live queda
+  vacía en `trades.csv` (no se inventa) y está en el log de cuenta (`fee`).
+- **Funding real:** `GET /api/history/v3/account-log?info=funding rate change`.
+  El importe se toma como la diferencia de saldo de la entrada.
+- **Stop de catástrofe:** `sendorder` con `orderType=stp`, `triggerSignal=mark`,
+  `reduceOnly=true` y sin precio límite (se ejecuta a mercado al saltar).
+  Por cada posición, la pérdida en el stop debe caber en el 80 % de
+  (`marginEquity` - `maintenanceMargin`). Si no cabe, el stop se acerca y se
+  alerta. Se sincroniza en cada ciclo y solo toca órdenes con
+  `cliOrdId` "cs-…".
+- **Lista blanca:** el cliente privado solo puede llamar a 9 endpoints, y
+  ninguno mueve fondos. Un test recorre todo `src/` en busca de rutas de
+  retiro o transferencia.
