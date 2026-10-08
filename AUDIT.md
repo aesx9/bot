@@ -358,3 +358,147 @@ Una caída entre escribir la fila y guardar el estado la duplica al reconciliar.
 Si `/openpositions` se retrasa respecto a un fill, el ciclo siguiente podría
 repetir la orden. No es verificable sin la API real: se comprobará en la prueba
 supervisada con dinero real.
+
+---
+
+# Segunda auditoría
+
+> Auditoría de las correcciones anteriores sobre `7b5ba8e`. Mismo formato: cada hallazgo
+> lleva su **Estado** y los commits de corrección empiezan por su ID (`git log --grep '^N1:'`).
+
+## Método
+
+- `make check` completo en `7b5ba8e`: ruff, mypy strict, 545 tests, pip-audit (0
+  vulnerabilidades) y detect-secrets, todo en verde. SHA de las acciones de GitHub contrastados
+  con `git ls-remote`.
+- **Reversión:** para cada commit de corrección de la primera auditoría se restauró el código
+  (no los tests) del commit padre y se ejecutaron los tests nuevos. Todos fallan salvo los de
+  "no romper" (comportamiento que ya era correcto) y los de A1/M8, que no importan con el código
+  anterior; esos dos se verificaron por mutación.
+- **Mutación:** 34 mutaciones dirigidas sobre el código actual (A1-A5, M2-M5, M8-M14, B3, B6,
+  B8). Mueren 31; sobreviven dos de A1 (las dos capas de captura se tapan entre sí) y una de B3
+  (el test no distingue el día del tipo del BCE): ver T1 y T2.
+- PoCs P1-P5 sobre la API privada simulada.
+
+## Resumen
+
+| ID | Gravedad | Hallazgo | PoC | Estado |
+|---|---|---|---|---|
+| N1 | Media | El tope de nocional por hora detiene el bot al copiar un cierre | P4 | pendiente |
+| N2 | Media | Con el bot detenido el libro fiscal no recoge nada (cierres de emergencia, stops) | P3 | pendiente |
+| N3 | Media | Cualquier rechazo del stop nuevo retira el antiguo (regresión de M2) | P2 | pendiente |
+| N4 | Media | El funding que no es USD solo queda en una alerta; el export no lo ve (M4) | P1 | pendiente |
+| N5 | Baja/Media | Tras saltar un stop de catástrofe el bot reabre en el ciclo siguiente | P5 | pendiente |
+| T1 | Baja | Hueco de test de A1: las dos capas de captura se tapan entre sí | mutación | pendiente |
+| T2 | Baja | Hueco de test de B3: ningún test distingue el día del tipo del BCE | mutación | pendiente |
+| N6 | Baja | `fills_seen` conserva los ids más antiguos al recortar | (lectura) | pendiente |
+| N7 | Baja | `liquidation_fee` no se deduce como comisión | (lectura) | pendiente |
+| N8 | Baja | La guarda de exposición no cuenta los activos con precio incoherente | (lectura) | pendiente |
+| N9 | Baja | El README dice que `positions.csv` se escribe "al cambiar" | (lectura) | pendiente |
+| N10 | Baja | Los cierres de emergencia cuentan en el tope de nocional | (lectura) | pendiente |
+
+## Hallazgos
+
+### N1 — El tope de nocional detiene el bot al copiar un cierre
+**Gravedad:** media · **Estado:** pendiente
+
+`executor.py`: `check_notional` se aplica también a las órdenes reduceOnly. Con 1.500 USD
+abiertos en la última hora, el cierre del líder supera 2.000 USD/h, salta el circuit breaker y
+el bot se detiene SIN cerrar: posición abierta con el líder plano y solo el stop de catástrofe.
+Corrección: las reduceOnly no cuentan ni se frenan en el tope de nocional.
+
+### N2 — Libro fiscal parado mientras el bot está detenido
+**Gravedad:** media · **Estado:** pendiente
+
+`engine.py`: el libro (funding, fills, comisiones, cursor y foto de posiciones) solo se
+actualiza al final de un ciclo de trading completo. Los fills de un cierre por STOP o drawdown,
+de un stop de catástrofe o de una liquidación no llegan a `kraken_fills.csv` mientras dure la
+parada (nunca, si el bot se abandona). El export cree que la posición sigue abierta y la
+conciliación dice "cuadra" porque tampoco hay foto posterior. Corrección: actualizar el libro
+también en ciclos detenidos y tras cada cierre de emergencia, y `--sync-ledger` de solo lectura.
+
+### N3 — Un rechazo cualquiera del stop nuevo retira el antiguo
+**Gravedad:** media · **Estado:** pendiente
+
+`live.py`, `_sync_catastrophe_stops`: el respaldo "cancelar y recolocar" (pensado para un
+exchange que admite un solo stop por símbolo) se activa con CUALQUIER estado distinto de
+`placed`. Con `marketSuspended` o un precio inválido se cancela el stop válido, el reintento
+también falla y la posición queda sin protección. Corrección: respaldo solo con el código
+concreto; cualquier otro rechazo mantiene el antiguo y alerta crítica.
+
+### N4 — Funding en otra moneda: solo una alerta
+**Gravedad:** media · **Estado:** pendiente
+
+`live.py`, `_funding_event`: un funding que no es USD no se escribe en ningún CSV, su
+`booking_uid` se marca como visto (no se relee ni se vuelve a avisar) y solo queda la alerta
+en Telegram y en `copybot.log` (rota a 60 días, sin copia de seguridad). `export_fiscal` no lo
+detecta. Además `_currency` prefiere `collateral` a `asset` en silencio. Corrección: CSV propio
+con moneda; el export convierte EUR y falla si es otra; aviso si `collateral` y `asset`
+discrepan.
+
+### N5 — Reapertura tras un stop de catástrofe
+**Gravedad:** baja/media · **Estado:** pendiente
+
+Tras saltar el stop, el ciclo siguiente reabre la posición del líder sin aviso específico. Con
+M13 el stop está al 7,5 % (2x) o 5 % (3x), alcanzable con volatilidad normal: cada repetición
+pierde esa distancia hasta que corta el drawdown. Corrección: un fill de origen
+`stop_catastrofe` o `liquidación` detiene el bot con alerta crítica.
+
+### T1 — Las dos capas de captura de A1
+**Gravedad:** baja · **Estado:** pendiente
+
+Quitar el `try` de `Engine.cycle()` o reducir el `except` de `_cycle` a `CYCLE_ERRORS`
+sobrevive a la suite. Con lo segundo, una excepción imprevista acaba en `_last_resort`, que no
+guarda el estado ni avisa.
+
+### T2 — Día del tipo del BCE (B3)
+**Gravedad:** baja · **Estado:** pendiente
+
+El test de B3 usa el 1 de enero, sin tipo publicado: UTC y Madrid caen ambos en el 31/12 y la
+mutación `local_date` → fecha UTC sobrevive.
+
+### N6 — Recorte de `fills_seen`
+**Gravedad:** baja · **Estado:** pendiente
+
+Las páginas de `/fills` van de las más recientes a las más antiguas y se añaden en ese orden:
+al recortar a 500 se conservan los ids más antiguos y en cada sondeo se vuelven a paginar los
+recientes (el CSV no duplica, pero consume peticiones).
+
+### N7 — `liquidation_fee`
+**Gravedad:** baja · **Estado:** pendiente
+
+Las entradas de liquidación del log traen la comisión en `liquidation_fee`, que se ignoraba.
+
+### N8 — Guarda de exposición y precios incoherentes
+**Gravedad:** baja · **Estado:** pendiente
+
+`engine.py`: las posiciones de los activos con precio incoherente (M11) se quitan de `current`
+antes de pasarlo al ejecutor, y la guarda de exposición total no las cuenta.
+
+### N9 — README de `positions.csv`
+**Gravedad:** baja · **Estado:** pendiente
+
+La foto se escribe con el registro de capital (cada 15 min) y, sin cambios, como mucho cada hora.
+
+### N10 — Cierres de emergencia y tope de nocional
+**Gravedad:** baja · **Estado:** pendiente
+
+Las órdenes de emergencia se registraban con su nocional: tras `--reset-halt` el breaker podía
+saltar en la primera orden normal.
+
+## Checklist de la prueba supervisada live (capital mínimo)
+
+- [ ] Log de cuenta en una cuenta con colateral EUR: qué traen `asset` y `collateral`, moneda del
+      funding y de las comisiones, signo de `fee`, presencia de `liquidation_fee`.
+- [ ] Paginación: `since` inclusivo o no; con `sort=asc` y `count`, que se devuelven las entradas
+      más ANTIGUAS (no las más recientes ordenadas); semántica de `lastFillTime` en `/fills`.
+- [ ] B9: `/openpositions` refleja el fill nada más recibir la respuesta; dos ciclos seguidos
+      (debounce) no duplican la orden.
+- [ ] Stops de catástrofe: código de rechazo real con dos stops en el mismo símbolo; `openorders`
+      devuelve el `cliOrdId` `cs-`; el stop aparece en la web de Kraken.
+- [ ] Kill switch real: cierre, cancelación de los stops `cs-` y fills del cierre en el libro.
+- [ ] `--sync-ledger` con el bot detenido trae los fills y el funding pendientes.
+- [ ] Al terminar: export fiscal con `fiscal_conciliacion_<año>.csv` cuadrando; comisiones y funding
+      contrastados con el historial de Kraken; signo del funding verificado.
+- [ ] Reinicio por systemd sin pedir confirmación; salida 3 al detenerse; aviso de `OnFailure`;
+      healthcheck externo.
