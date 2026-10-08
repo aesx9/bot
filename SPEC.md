@@ -268,6 +268,9 @@ pública real:
     cambio de dirección), reducciones, y aperturas o aumentos. Dentro de cada
     grupo, de mayor a menor nocional.
   - Superar el nocional por hora sigue deteniendo el bot.
+  - (Segunda auditoría, N1) Ese tope solo cuenta lo que abre o aumenta riesgo: las
+    órdenes reduceOnly y los cierres de emergencia no suman nocional ni se frenan
+    (sí cuentan en el límite de órdenes por minuto, salvo en emergencia).
   - Fuera de la sincronización inicial, si hay órdenes aplazadas en más de
     N = 3 ciclos seguidos (`risk.max_consecutive_paced_cycles`, tope absoluto
     5), el bot se detiene y alerta.

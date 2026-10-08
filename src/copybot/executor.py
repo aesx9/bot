@@ -12,7 +12,8 @@ Garantías:
 - Un cambio de dirección solo abre la nueva posición si el cierre se completó.
 - Circuit breaker: el límite de órdenes por minuto nunca se supera; las
   acciones que no caben se aplazan al ciclo siguiente (vienen priorizadas
-  del planificador). Superar el nocional por hora detiene el bot.
+  del planificador). Superar el nocional por hora detiene el bot; las órdenes
+  reduceOnly (y los cierres de emergencia) no cuentan ni se frenan en ese tope.
 - Cierres de emergencia (drawdown, kill switch): solo reduceOnly y sin
   límite del circuit breaker.
 - Tope absoluto por activo comprobado antes de cada envío.
@@ -183,9 +184,10 @@ class Executor:
                                     a.symbol, over)
                         skipped += 1
                         continue
-                reason = self._breaker.check_notional(a.notional_usd)
-                if reason:
-                    raise CircuitBreakerTripped(reason)
+                if not a.reduce_only:
+                    reason = self._breaker.check_notional(a.notional_usd)
+                    if reason:
+                        raise CircuitBreakerTripped(reason)
 
             spec = markets[a.symbol]
             req = OrderRequest(
@@ -207,7 +209,10 @@ class Executor:
             # abierta ya consta (kill switch, drawdown y stops la cubren).
             self._state.pending_orders[req.cli_ord_id] = info
             self._state.managed_symbols.add(a.symbol)
-            self._breaker.record(a.notional_usd)
+            # Una reduceOnly cuenta como orden (límite por minuto) pero no como nocional: el
+            # tope existe para frenar el riesgo que se AÑADE, y detener el bot al copiar un
+            # cierre dejaría la posición abierta con el líder plano
+            self._breaker.record(ZERO if a.reduce_only else a.notional_usd)
             if emergency:
                 # Un cierre reduceOnly de emergencia nunca puede quedar bloqueado por no
                 # poder escribir en disco (disco lleno, sistema de ficheros de solo lectura).

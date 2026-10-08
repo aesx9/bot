@@ -78,7 +78,7 @@ haircut del 2,2 %.
 | Nocional por activo / total | 600 USD / 1.500 USD |
 | Slippage máximo de una orden | 0,5 % |
 | Órdenes por minuto | 10 (las que no caben se aplazan) |
-| Nocional enviado por hora | 2.000 USD (si se supera, el bot se detiene) |
+| Nocional enviado por hora (aperturas y aumentos) | 2.000 USD (si se supera, el bot se detiene; reducciones y cierres no cuentan) |
 | Drawdown desde el máximo | 15 % (cierra lo gestionado y se detiene) |
 | Ciclos seguidos con error | 5 |
 | Perfil de arranque live | 1x y 100 USD por activo hasta quitarlo a mano |
@@ -361,7 +361,7 @@ primer arranque live a mano (la confirmación se invalidó).
 | - | - | - |
 | Fichero `STOP` | Cierra lo gestionado (configurable) y se detiene | Ver emergencia |
 | Drawdown ≥ 15 % desde el máximo | Cierra lo gestionado y se detiene | Revisar antes de reanudar |
-| Nocional por hora > 2.000 USD | Se detiene | Revisar qué hizo el líder |
+| Nocional de aperturas y aumentos por hora > 2.000 USD | Se detiene | Revisar qué hizo el líder |
 | Órdenes aplazadas > 3 ciclos seguidos (fuera de la sincronización inicial) | Se detiene | Revisar la actividad del líder |
 | 3 ciclos seguidos con datos del líder sospechosos | Se detiene sin operar | ¿Depósito o retiro del líder? |
 | 5 ciclos seguidos con error | Se detiene | Logs: red, API o claves |

@@ -215,6 +215,32 @@ async def test_notional_per_hour_still_stops(tmp_path: Path) -> None:
     assert len(ex.sent) == 1
 
 
+async def test_reduce_only_orders_never_trip_nor_count_in_the_notional_limit(
+        tmp_path: Path) -> None:
+    """N1 (PoC P4): con el nocional de la hora casi agotado, copiar un CIERRE del líder
+    detenía el bot y dejaba la posición abierta. Las reduceOnly no cuentan ni se frenan."""
+    execu, ex, state, _, market, _ = setup(tmp_path, max_notional_per_hour_usd=D(150))
+    await run(execu, market, [act(ActionKind.OPEN, Side.BUY, "1")])  # 100 de 150
+    await run(execu, market, [act(ActionKind.CLOSE, Side.SELL, "1", True)], {SOL: D(1)})
+    assert await ex.positions() == {}
+    assert sum(n for _, n in state.breaker_log) == D(100)  # el cierre no suma
+    assert len(state.breaker_log) == 2  # pero sí cuenta como orden en el límite por minuto
+    await run(execu, market, [act(ActionKind.OPEN, Side.BUY, "0.4")])  # 140: aún cabe
+    with pytest.raises(CircuitBreakerTripped):  # las aperturas siguen frenándose
+        await run(execu, market, [act(ActionKind.INCREASE, Side.BUY, "0.2")], {SOL: D("0.4")})
+
+
+async def test_emergency_closes_do_not_count_in_the_notional_limit(tmp_path: Path) -> None:
+    """N10: un cierre de emergencia sumaba su nocional y, tras --reset-halt, la primera
+    orden normal podía hacer saltar el breaker."""
+    execu, ex, state, _, market, _ = setup(tmp_path, max_notional_per_hour_usd=D(150))
+    await run(execu, market, [act(ActionKind.OPEN, Side.BUY, "1")])
+    await run(execu, market, [act(ActionKind.CLOSE, Side.SELL, "1", True)], {SOL: D(1)},
+              emergency=True)
+    assert sum(n for _, n in state.breaker_log) == D(100)
+    await run(execu, market, [act(ActionKind.OPEN, Side.BUY, "0.4")])  # 140 <= 150
+
+
 async def test_emergency_close_bypasses_breaker_but_only_reduce_only(tmp_path: Path) -> None:
     execu, ex, _, _, market, _ = setup(tmp_path, max_orders_per_minute=1)
     await run(execu, market, [act(ActionKind.OPEN, Side.BUY, "1")])
