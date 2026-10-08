@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 from decimal import Decimal as D
 from pathlib import Path
 from typing import Any
@@ -93,3 +94,35 @@ async def test_a_task_that_returns_early_also_fails_loudly(tmp_path: Path) -> No
 
     with pytest.raises(LoopTaskDied):
         await asyncio.wait_for(w.engine.run_forever(lambda **cb: QuietStream(**cb)), 5)
+
+
+# --- A2: ciclo abortado a mitad de ejecución ---
+
+
+async def test_position_opened_before_a_breaker_trip_stays_managed(tmp_path: Path) -> None:
+    """PoC J: con el nocional/hora agotado a mitad de ciclo, la posición ya abierta
+    debe constar como gestionada (en disco) y el kill switch debe poder cerrarla."""
+    w = World(tmp_path, FakeLeader("100000", BTC="1", ETH="10"),
+              risk={"max_notional_per_hour_usd": 200})
+    assert await w.cycle() is Outcome.HALTED
+    opened = set(await w.positions())
+    assert len(opened) == 1  # se abrió una, la segunda saltó el breaker
+    assert w.store.load().managed_symbols == opened
+    (w.tmp / "STOP").touch()
+    await w.cycle()
+    assert await w.positions() == {}
+
+
+async def test_orphan_is_closed_once_the_leader_is_flat_after_reset(tmp_path: Path) -> None:
+    """PoC J2: tras --reset-halt con el líder ya plano, el bot cierra lo que abrió."""
+    from copybot.risk import reset_halt
+
+    w = World(tmp_path, FakeLeader("100000", BTC="1", ETH="10"),
+              risk={"max_notional_per_hour_usd": 200})
+    await w.cycle()
+    assert await w.positions()
+    reset_halt(w.state)
+    w.leader.positions.clear()
+    w.clock["now"] += timedelta(hours=1)  # fuera de la ventana de nocional/hora del breaker
+    assert await w.cycle() is Outcome.OK
+    assert await w.positions() == {}

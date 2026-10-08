@@ -179,8 +179,11 @@ class Executor:
                 "leader_time": None if ctx.leader_time is None else ctx.leader_time.isoformat(),
                 "mode": ctx.mode, "created_at": self._now().isoformat(),
             }
-            # Primero se persiste la intención; después se envía.
+            # Primero se persiste la intención; después se envía. El símbolo pasa a
+            # gestionado AHORA: si el ciclo se aborta después de este envío, la posición
+            # abierta ya consta (kill switch, drawdown y stops la cubren).
             self._state.pending_orders[req.cli_ord_id] = info
+            self._state.managed_symbols.add(a.symbol)
             self._breaker.record(a.notional_usd)
             self._store.save(self._state)
 

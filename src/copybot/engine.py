@@ -291,8 +291,14 @@ class Engine:
             leader_prices={s: snap.mids[c] for s, c in coin_for.items() if c in snap.mids},
             leader_time=leader_time,
         )
-        execution = await self._executor.execute(
-            actions, markets=markets, positions=current, ctx=ctx)
+        try:
+            execution = await self._executor.execute(
+                actions, markets=markets, positions=current, ctx=ctx)
+        except Exception:
+            # El ciclo se aborta (breaker, límite duro, orden incierta, fallo inesperado):
+            # lo que ya se abrió en este ciclo no puede quedarse sin stop.
+            await self._protect_after_abort(markets)
+            raise
         results = execution.results
 
         after = await self._ex.positions()
@@ -315,6 +321,18 @@ class Engine:
         if execution.deferred:
             detail += f", {execution.deferred} aplazadas por el límite de órdenes/min"
         return CycleReport(Outcome.OK, detail, orders=len(results))
+
+    async def _protect_after_abort(self, markets: dict[str, MarketSpec]) -> None:
+        """Mejor esfuerzo: guardar lo gestionado y colocar los stops de catástrofe."""
+        try:
+            after = await self._ex.positions()
+            await self._sync_protective_stops(after, markets)
+        except Exception:
+            log.exception("no se pudieron proteger las posiciones tras abortar el ciclo")
+        try:
+            self._save()
+        except Exception:
+            log.exception("no se pudo guardar el estado tras abortar el ciclo")
 
     async def _track_pacing(self, deferred: int) -> CycleReport | None:
         """Aplazar órdenes es normal en la sincronización inicial (primer reparto

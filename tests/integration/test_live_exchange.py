@@ -326,3 +326,36 @@ async def test_malformed_payloads_raise_exchange_error(env: Env, breakage: str) 
         env.kraken.fills = {"x": 1}  # type: ignore[assignment]
         with pytest.raises(ExchangeError):
             await env.live.find_order("c1")
+
+
+async def test_stop_is_placed_even_when_the_cycle_aborts_mid_execution(
+    env: Env, tmp_path: Path
+) -> None:
+    """A2: lo abierto antes de que salte el breaker lleva stop de catástrofe y consta como
+    gestionado en disco."""
+    from copybot.alerts import LogAlerter
+    from copybot.config import Config
+    from copybot.engine import Engine, Outcome
+    from tests.conftest import LEADER
+    from tests.fakes import FakeLeader
+
+    cfg = Config.model_validate({"leader_address": LEADER, "mode": "live",
+                                 "filters": {"ignore_preexisting": False},
+                                 "risk": {"max_notional_per_hour_usd": 150}})
+    market = FakeMarket()
+    for sym in (SOL, "PF_ETHUSD"):
+        market.set_mark(sym, "100")
+    env.kraken.fill_price = D(100)
+    leader = FakeLeader("100000", SOL="5000", ETH="5000")
+    leader.clock = lambda: NOW
+    store = StateStore(tmp_path / "s.json")
+    engine = Engine(cfg=cfg, state=env.state, store=store, leader=leader, market=market,
+                    exchange=env.live, recorder=CsvRecorder(tmp_path), alerter=LogAlerter(),
+                    kill_dirs=[tmp_path], startup_profile=True, now=lambda: NOW,
+                    breaker_clock=lambda: NOW.timestamp())
+    assert (await engine.cycle()).outcome is Outcome.HALTED  # 2.ª orden: 100 + 100 > 150
+    opened = set(await env.live.positions())
+    assert len(opened) == 1
+    assert store.load().managed_symbols == opened
+    [stop] = env.kraken.open_orders
+    assert stop["symbol"] in opened and stop["reduceOnly"] is True
