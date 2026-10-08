@@ -410,13 +410,37 @@ class LiveExchange:
             self.alerts.append(problem)
         if e.get("info") == "funding rate change":
             events.append(self._funding_event(e, ts, symbol, currency))
-        elif e.get("fee") is not None:
+            return
+        uid = str(e.get("booking_uid") or "")
+        if e.get("fee") is not None:
             fee = _dec(e["fee"], "comisión")
             self._check_fee(e, symbol, fee, currency)
             staged.fees.append({
                 "timestamp": ts, "symbol": symbol, "fee": fee,
                 "currency": currency or UNKNOWN_CURRENCY,
-                "info": str(e.get("info")), "booking_uid": str(e.get("booking_uid") or ""),
+                "info": str(e.get("info")), "booking_uid": uid,
+            })
+        liquidation_fee = (ZERO if e.get("liquidation_fee") in (None, "")
+                           else _dec(e["liquidation_fee"], "comisión de liquidación"))
+        if liquidation_fee:
+            # La comisión de una liquidación va en su propio campo: es otra fila de fees.csv
+            # (con su propio id, para que la idempotencia por booking_uid no la funda con `fee`)
+            fee = liquidation_fee
+            if fee < 0:
+                self.alerts.append(
+                    f"SIGNO DE LA COMISIÓN: {symbol}: comisión de liquidación negativa ({fee}) "
+                    f"[booking_uid={e.get('booking_uid')!r}]. Se registra tal cual; revisa "
+                    "fees.csv")
+            if currency not in CONVERTIBLE and e.get("fee") is None:  # si no, ya se avisó
+                self.alerts.append(
+                    f"MONEDA DE LA COMISIÓN: {symbol} {fee} {currency or UNKNOWN_CURRENCY} "
+                    f"[booking_uid={e.get('booking_uid')!r}]: no es USD ni EUR; se registra con "
+                    "su moneda, el export fiscal no la convierte (concílala a mano)")
+            staged.fees.append({
+                "timestamp": ts, "symbol": symbol, "fee": fee,
+                "currency": currency or UNKNOWN_CURRENCY,
+                "info": f"{e.get('info')} (liquidation_fee)",
+                "booking_uid": f"{uid}:liquidation_fee" if uid else "",
             })
 
     def _check_fee(self, e: Mapping[str, Any], symbol: str, fee: Decimal, currency: str) -> None:

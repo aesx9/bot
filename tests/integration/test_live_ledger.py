@@ -331,3 +331,32 @@ async def test_fills_seen_keeps_the_most_recent_ids_when_trimmed(
     await env.live.collect_funding(NOW + timedelta(minutes=7))
     assert env.live.drain_ledger() == ([], [])
     assert sum(path.endswith("/fills") for _, path, _ in env.kraken.calls[calls:]) == 1
+
+
+async def test_liquidation_fee_is_recorded_and_deducted(env: Env, tmp_path: Path) -> None:  # noqa: F811
+    """N7: la comisión de una liquidación viene en `liquidation_fee` (no en `fee`) y se
+    ignoraba: el export no la deducía."""
+    from copybot.analysis import ecb, fiscal
+    from copybot.engine import update_ledger
+
+    await started(env)
+    env.kraken.fills = [fill_at(1000, "open", "buy", "1"),
+                        {**fill_at(5000, "liq", "sell", "1"), "fillType": "liquidation",
+                         "price": "90"}]
+    env.kraken.logs = [
+        {**fee_at(1000, "t1", fee="0.05"), "collateral": "USD"},
+        {**fee_at(5000, "l1", fee="0"), "info": "futures liquidation", "collateral": "USD",
+         "liquidation_fee": "1.50"},
+    ]
+    rec = CsvRecorder(tmp_path)
+    await update_ledger(env.live, rec, NOW + timedelta(minutes=6))
+    fees = {r["booking_uid"]: (r["comision"], r["concepto"]) for r in rows(tmp_path / "fees.csv")}
+    assert fees["l1:liquidation_fee"] == ("1.50", "futures liquidation (liquidation_fee)")
+    days = tuple(NOW.date() + timedelta(days=i) for i in range(-3, 3))
+    rates = ecb.RateTable(days, tuple(D("1.25") for _ in days), "test")
+    pos_path, *_ = fiscal.export(tmp_path, 2026, tmp_path / "out", rates)
+    [p] = rows(pos_path)
+    assert (p["origen_cierre"], p["comisiones_usd"]) == ("liquidación", "1.55")  # 0.05 + 1.50
+    # idempotente: el apunte de liquidación no se duplica en un segundo sondeo
+    await update_ledger(env.live, rec, NOW + timedelta(minutes=12))
+    assert len(rows(tmp_path / "fees.csv")) == 3
