@@ -227,6 +227,9 @@ class Engine:
     async def _trade(self, leader_time: datetime | None) -> CycleReport:
         cfg, state = self.cfg, self.state
         await self._executor.reconcile_pending()
+        prepare_ledger = getattr(self._ex, "prepare_ledger", None)
+        if prepare_ledger is not None:  # live: línea base del libro ANTES de la primera orden
+            await prepare_ledger(self._now())
 
         snap = await self._leader.leader_snapshot(cfg.leader_address)
         sanity = check_leader(snap, state.sanity, cfg.sanity,

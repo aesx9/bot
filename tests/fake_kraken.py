@@ -53,6 +53,7 @@ class FakeKraken:
         self.lose_response = False  # la orden se ejecuta pero la respuesta se pierde
         self.calls: list[tuple[str, str, dict[str, str]]] = []
         self.bad_signatures = 0
+        self._fill_seq = 0
 
     # --- utilidades ---
 
@@ -126,8 +127,9 @@ class FakeKraken:
             return _ok(sendStatus={"status": self.ioc_mode})
         size = Decimal(p["size"])
         self._apply(p["symbol"], size if p["side"] == "buy" else -size)
+        self._fill_seq += 1
         self.fills.append({"cliOrdId": p["cliOrdId"], "fillTime": SERVER_TIME,
-                           "fillType": "taker", "fill_id": "f", "order_id": "o",
+                           "fillType": "taker", "fill_id": f"f{self._fill_seq}", "order_id": "o",
                            "price": str(self.fill_price), "side": p["side"], "size": p["size"],
                            "symbol": p["symbol"]})
         if self.lose_response:

@@ -213,6 +213,17 @@ class LiveExchange:
 
     # --- funding, comisiones y fills reales (libro para el export fiscal) ---
 
+    async def prepare_ledger(self, now: datetime) -> None:
+        """Línea base del libro fiscal: debe ejecutarse ANTES de enviar la primera orden.
+
+        Lo que ya hay en /fills y en el log de cuenta es anterior al bot y no se importa.
+        Si la línea base se fijara después (en collect_funding, tras operar), se
+        descartarían como "anteriores" los fills de las primeras órdenes del propio bot."""
+        if self._state.live_funding_cursor_ms is not None:
+            return
+        await self._poll_fills()  # sin cursor: marca como vistos los fills existentes
+        self._state.live_funding_cursor_ms = int(now.timestamp() * 1000)
+
     async def collect_funding(self, now: datetime) -> list[FundingEvent]:
         """Cada FUNDING_POLL_SECONDS: funding y comisiones del log de cuenta y fills
         nuevos de /fills. Los fills y comisiones quedan en ledger_fills/ledger_fees."""

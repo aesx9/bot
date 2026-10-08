@@ -200,7 +200,7 @@ async def test_ledger_records_real_fills_and_fees_but_not_history(env: Env) -> N
     await env.live.collect_funding(NOW + timedelta(minutes=6))
     fills, fees = env.live.drain_ledger()
     assert [(f["fill_id"], f["origin"]) for f in fills] == [
-        ("f", "bot"), ("stop", "stop_catastrofe"), ("liq", "liquidación")]
+        ("f1", "bot"), ("stop", "stop_catastrofe"), ("liq", "liquidación")]
     assert [(f["symbol"], f["fee"], f["currency"]) for f in fees] == [(SOL, D("0.1"), "USD")]
     await env.live.collect_funding(NOW + timedelta(minutes=12))
     assert env.live.drain_ledger()[0] == []  # sin duplicados
@@ -359,3 +359,46 @@ async def test_stop_is_placed_even_when_the_cycle_aborts_mid_execution(
     assert store.load().managed_symbols == opened
     [stop] = env.kraken.open_orders
     assert stop["symbol"] in opened and stop["reduceOnly"] is True
+
+
+async def test_first_cycle_fills_reach_the_fiscal_ledger(env: Env, tmp_path: Path) -> None:
+    """A4 (PoC A): el primer ciclo live opera ANTES de la primera llamada a collect_funding;
+    sus fills y comisiones no pueden descartarse como "anteriores al primer arranque"."""
+    import csv
+
+    from copybot.alerts import LogAlerter
+    from copybot.config import Config
+    from copybot.engine import Engine, Outcome
+    from tests.conftest import LEADER
+    from tests.fakes import FakeLeader
+
+    env.kraken.fills = [{"cliOrdId": None, "fillTime": "2026-10-01T00:00:00Z",
+                         "fillType": "taker", "fill_id": "viejo", "order_id": "o",
+                         "price": "1", "side": "buy", "size": "1", "symbol": SOL}]
+    cfg = Config.model_validate({"leader_address": LEADER, "mode": "live",
+                                 "filters": {"ignore_preexisting": False}})
+    market = FakeMarket()
+    market.set_mark(SOL, "100")
+    env.kraken.fill_price = D(100)
+    leader = FakeLeader("100000", SOL="5000")
+    leader.clock = lambda: NOW
+    engine = Engine(cfg=cfg, state=env.state, store=StateStore(tmp_path / "s.json"),
+                    leader=leader, market=market, exchange=env.live,
+                    recorder=CsvRecorder(tmp_path), alerter=LogAlerter(), kill_dirs=[tmp_path],
+                    startup_profile=True, now=lambda: NOW,
+                    breaker_clock=lambda: NOW.timestamp())
+    assert (await engine.cycle()).outcome is Outcome.OK
+    assert len(env.kraken.sends("ioc")) == 1  # el primer ciclo sí operó
+    rows = list(csv.DictReader((tmp_path / "kraken_fills.csv").open()))
+    assert [(r["fill_id"], r["origen"], r["lado"]) for r in rows] == [("f1", "bot", "buy")]
+    assert "viejo" in env.state.fills_seen  # lo anterior al bot solo se marca como visto
+
+
+async def test_prepare_ledger_is_idempotent_and_runs_once(env: Env) -> None:
+    await env.live.prepare_ledger(NOW)
+    first = env.state.live_funding_cursor_ms
+    assert first == int(NOW.timestamp() * 1000)
+    n = len([c for c in env.kraken.calls if c[1].endswith("/fills")])
+    await env.live.prepare_ledger(NOW + timedelta(hours=1))
+    assert env.state.live_funding_cursor_ms == first
+    assert len([c for c in env.kraken.calls if c[1].endswith("/fills")]) == n
