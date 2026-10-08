@@ -1,0 +1,10 @@
+-c requirements.lock
+pytest
+pytest-asyncio
+respx
+hypothesis
+pip-audit
+detect-secrets
+pre-commit
+ruff
+mypy

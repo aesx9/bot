@@ -1,0 +1,5 @@
+# Dependencias de ejecución. Regenerar lock: make lock
+httpx
+websockets
+pydantic
+python-dotenv

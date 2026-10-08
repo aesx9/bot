@@ -1,0 +1,21 @@
+# Hooks locales: usan las herramientas fijadas en requirements-dev.lock
+# (sin descargar nada en cada commit). Instalar con: .venv/bin/pre-commit install
+repos:
+  - repo: local
+    hooks:
+      - id: detect-secrets
+        name: detect-secrets (bloquea commits con secretos)
+        entry: .venv/bin/detect-secrets-hook --baseline .secrets.baseline
+        language: system
+        exclude: '(\.secrets\.baseline|requirements.*\.lock)$'
+      - id: forbid-env-files
+        name: prohibir .env y datos de ejecución
+        entry: 'Prohibido commitear .env, state, logs o CSV'
+        language: fail
+        files: '(^|/)(\.env(\..*)?|state\.json|.*\.csv|.*\.log)$'
+        exclude: '(^|/)\.env\.example$'
+      - id: ruff
+        name: ruff
+        entry: .venv/bin/ruff check
+        language: system
+        types: [python]

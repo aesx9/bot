@@ -1,0 +1,38 @@
+# --- Secretos: NUNCA al repositorio ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- Datos de ejecución ---
+data/
+state/
+state.json
+*.state.json
+*.lock.pid
+logs/
+*.log
+*.log.*
+*.csv
+STOP
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+htmlcov/
+
+# --- Editores / SO ---
+.idea/
+.vscode/
+.DS_Store
