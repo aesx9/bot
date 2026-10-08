@@ -30,6 +30,11 @@ HARD_MAX_SANITY_FAILURES: Final = 5
 # Drawdown máximo desde el pico de capital (%)
 HARD_MAX_DRAWDOWN_PCT: Final = Decimal("15")
 
+# Perfil de arranque live: más estricto que los topes normales. Se activa la
+# primera vez que se arranca en live y solo se quita de forma explícita.
+STARTUP_PROFILE_MAX_LEVERAGE: Final = Decimal("1")
+STARTUP_PROFILE_MAX_ASSET_USD: Final = Decimal("100")
+
 # Stop de catástrofe: distancia permitida respecto al precio de entrada (%)
 HARD_MIN_CATASTROPHE_STOP_PCT: Final = Decimal("5")
 HARD_MAX_CATASTROPHE_STOP_PCT: Final = Decimal("50")
