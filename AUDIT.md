@@ -47,7 +47,7 @@
 | M4 | Media | Moneda y signo de funding y comisiones sin verificar | (lectura) | pendiente |
 | M5 | Media | Puerta `--check` mal invalidada y sin revalidar permisos | M | resuelto (`8c87bfd`) |
 | M6 | Media | "SSH solo con clave" puede no aplicarse | (OpenSSH) | resuelto (`70deb3f`) |
-| M7 | Media | `copybot-cli --status` falla con el servicio activo | (tests) | pendiente |
+| M7 | Media | `copybot-cli --status` falla con el servicio activo | (tests) | resuelto (`454058d`) |
 | M8 | Media | Sin vigilancia externa, watchdog ni manejo de SIGTERM | (lectura) | pendiente |
 | M9 | Media | El kill switch puede tardar hasta 1 h | (lectura) | pendiente |
 | M10 | Media | Posiciones manuales en mercados del líder se adoptan | E | pendiente |
@@ -196,10 +196,11 @@ verificar con `sshd -T`.
 - **Regresión:** tests/unit/test_deploy.py::test_dropin_sorts_before_cloud_init_so_it_wins, ::test_verification_catches_a_dropin_that_loses_to_cloud_init, ::test_setup_verifies_effective_config_before_reloading_sshd
 
 ### M7 — `copybot-cli --status`
-**Gravedad:** media · **Estado:** pendiente
+**Gravedad:** media · **Estado:** resuelto en `454058d`
 
 El wrapper lo deja pasar con el servicio activo pero Python toma el lock
 exclusivo y falla. Corrección: `--status` de solo lectura.
+- **Regresión:** tests/integration/test_main.py::test_status_works_while_the_service_runs_and_says_so, ::test_status_creates_no_files, ::test_second_instance_is_refused
 
 ### M8 — Vigilancia externa, watchdog y SIGTERM
 **Gravedad:** media · **Estado:** pendiente
