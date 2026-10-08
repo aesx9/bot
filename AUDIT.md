@@ -38,7 +38,7 @@
 |---|---|---|---|---|
 | A1 | Alta | Una excepción no prevista mata el bucle y el bot sigue "vivo" sin operar | B, C | resuelto (`fbbc0f8`) |
 | A2 | Alta | Posiciones huérfanas si el ciclo se aborta a mitad de ejecución | J, J2 | resuelto (`9770f80`) |
-| A3 | Alta | Estado compartido entre paper y live | E | pendiente |
+| A3 | Alta | Estado compartido entre paper y live | E | resuelto (`34176e2`) |
 | A4 | Alta | Los fills del primer ciclo live no entran en el libro fiscal | A | resuelto (`d59f8ef`) |
 | A5 | Alta | Cierre de emergencia frágil | I, K | pendiente |
 | M1 | Media | Tamaños y precios en notación científica en `sendorder` | formato | pendiente |
@@ -104,7 +104,7 @@ la pérdida; las altas debilitan justo las redes de seguridad.
 - **Regresión:** tests/integration/test_resilience.py::test_position_opened_before_a_breaker_trip_stays_managed y ::test_orphan_is_closed_once_the_leader_is_flat_after_reset; test_live_exchange.py::test_stop_is_placed_even_when_the_cycle_aborts_mid_execution
 
 ### A3 — Estado compartido entre paper y live
-**Gravedad:** alta · **Estado:** pendiente
+**Gravedad:** alta · **Estado:** resuelto en `34176e2`
 
 - **Dónde:** `state.py` (`BotState` sin modo), `main.py`, `checks.py`.
 - **Escenario (PoC E):** el README reutiliza el mismo `state.json` al pasar de
@@ -113,6 +113,7 @@ la pérdida; las altas debilitan justo las redes de seguridad.
   líder sin BTC, el primer ciclo live la cierra.
 - **Corrección (decisión de diseño):** directorio de datos separado por modo,
   modo guardado en el estado y negativa a arrancar si no coincide.
+- **Regresión:** tests/integration/test_main.py::test_live_does_not_inherit_paper_state, ::test_state_of_another_mode_refuses_to_start, ::test_each_mode_has_its_own_directory, ::test_legacy_single_directory_state_is_not_silently_ignored; test_state_risk.py::test_state_is_bound_to_the_mode_that_created_it; test_config.py::test_run_dir_is_separate_per_mode
 
 ### A4 — Los fills del primer ciclo live no entran en el libro fiscal
 **Gravedad:** alta · **Estado:** resuelto en `d59f8ef`
