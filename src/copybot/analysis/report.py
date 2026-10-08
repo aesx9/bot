@@ -187,10 +187,14 @@ def format_text(r: Report) -> str:
 
 def main(argv: Sequence[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="report", description="Informe de rendimiento del bot")
-    p.add_argument("--data-dir", type=Path, default=Path("data"))
+    p.add_argument("--data-dir", type=Path,
+                   help="directorio de datos de un modo (por defecto data/live o data/paper)")
     p.add_argument("--mode", choices=("paper", "live"))
     p.add_argument("--json", action="store_true")
     args = p.parse_args(argv)
+    if args.data_dir is None:
+        live = Path("data/live")
+        args.data_dir = live if live.exists() else Path("data/paper")
     modes = available_modes(args.data_dir)
     mode = args.mode or ("live" if "live" in modes else "paper")
     if mode not in modes:

@@ -139,7 +139,7 @@ async def run_bot(
     cfg: Config, state: BotState, store: StateStore, once: bool, env_path: Path,
     live_creds: KrakenCredentials | None = None,
 ) -> int:
-    data_dir = cfg.paths.data_dir
+    data_dir = cfg.run_dir
     async with httpx.AsyncClient(timeout=15) as http:
         alerter: Alerter = LogAlerter()
         if cfg.telegram.enabled:
@@ -229,12 +229,20 @@ def main(argv: Sequence[str] | None = None, prompt: Callable[[str], str] = input
         print('--check es para live: pon mode = "live" en la configuración.', file=sys.stderr)
         return EXIT_USAGE
 
-    data_dir = cfg.paths.data_dir
+    legacy_state = cfg.paths.data_dir / "state.json"
+    if legacy_state.exists():
+        print(f"Hay un estado del diseño anterior en {legacy_state}. Ahora cada modo usa su "
+              f"directorio ({cfg.paths.data_dir}/paper y {cfg.paths.data_dir}/live): mueve ese "
+              "estado y sus CSV al directorio del modo que corresponda, revisando su modo "
+              "(paper o live), o bórralo si no hace falta.", file=sys.stderr)
+        return EXIT_USAGE
+    data_dir = cfg.run_dir
     setup_logging(data_dir / "logs", external_rotation=cfg.logging.external_rotation)
     store = StateStore(data_dir / "state.json")
     try:
         with InstanceLock(data_dir / "copybot.lock"):
             state = store.load()
+            state.bind_mode(cfg.mode.value)
             if args.status:
                 print(status_text(state, cfg))
                 return EXIT_OK

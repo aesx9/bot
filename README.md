@@ -146,7 +146,8 @@ Ubuntu 24.04. Estructura:
 | - | - | - |
 | `/opt/copybot/app` | Código (git clone) y `.venv` | root (solo lectura) |
 | `/var/lib/copybot` | `config.toml`, `.env`, `service.env`, `STOP` | copybot (700) |
-| `/var/lib/copybot/data` | `state.json`, CSV, `logs/` y lockfile | copybot (700) |
+| `/var/lib/copybot/data/paper` | Estado, CSV, `logs/` y lockfile del modo **paper** | copybot (700) |
+| `/var/lib/copybot/data/live` | Lo mismo para el modo **live** | copybot (700) |
 
 ### 1. Preparar el servidor
 
@@ -185,7 +186,7 @@ Hay dos protecciones contra dos instancias a la vez:
    servicio está activo. Para hacer otra cosa:
    `sudo systemctl stop copybot`, después el comando, después
    `sudo systemctl start copybot`.
-2. El bot toma un bloqueo (`flock`) sobre `data/copybot.lock`: una segunda
+2. El bot toma un bloqueo (`flock`) sobre `data/<modo>/copybot.lock`: una segunda
    instancia termina con "ya hay una instancia en marcha", venga de donde
    venga.
 
@@ -205,7 +206,7 @@ sudoedit /var/lib/copybot/config.toml   # leader_address; mode = "paper"
 sudo copybot-cli --once                 # un ciclo de prueba
 sudo systemctl start copybot            # paper continuo
 sudo copybot-cli --status
-journalctl -u copybot -f                # o /var/lib/copybot/data/logs/copybot.log
+journalctl -u copybot -f                # o /var/lib/copybot/data/paper/logs/copybot.log
 ```
 
 Revisa cada pocos días con `report` ([más abajo](#informes-fiscalidad-y-elección-de-líder)):
@@ -213,6 +214,9 @@ slippage, retraso, funding y drawdown. Si el líder no te convence, prueba
 otro con `rank_leaders`.
 
 ### Fase B — Live con capital mínimo
+
+> El modo live arranca con un estado **nuevo** en `data/live`: nada del paper (posiciones
+> gestionadas, pico de capital, posiciones previas del líder) se hereda.
 
 1. **Deposita en Kraken Futures solo lo que aceptes perder** (el plan parte
    de unos 500 EUR como colateral).
@@ -266,10 +270,12 @@ crítica: avísalo antes de fiarte de `funding.csv`.
 sudo copybot-cli --status                 # parada, motivo, pico, gestionados, pendientes
 sudo systemctl status copybot
 journalctl -u copybot --since today
-tail -f /var/lib/copybot/data/logs/copybot.log
+tail -f /var/lib/copybot/data/live/logs/copybot.log     # o paper/
 ```
 
-Ficheros en `/var/lib/copybot/data`:
+Ficheros en `/var/lib/copybot/data/<modo>` (`paper` o `live`; **cada modo tiene su
+propio estado, bloqueo, logs y CSV y no comparten nada**: el estado guarda el modo y el bot
+se niega a arrancar si no coincide):
 
 | Fichero | Contenido |
 | - | - |
@@ -344,7 +350,7 @@ Con el servicio en marcha se pueden ejecutar sin pararlo (solo leen los CSV):
 ```bash
 cd /opt/copybot/app
 sudo -u copybot env PYTHONPATH=src .venv/bin/python scripts/report.py \
-    --data-dir /var/lib/copybot/data [--mode paper|live] [--json]
+    --data-dir /var/lib/copybot/data/live [--mode paper|live] [--json]
 ```
 
 **`report`**: rentabilidad y drawdown máximo (sobre `equity.csv`; incluye
@@ -356,7 +362,7 @@ activo. Nunca mezcla paper y live.
 
 ```bash
 sudo -u copybot env PYTHONPATH=src .venv/bin/python scripts/export_fiscal.py \
-    --year 2026 --data-dir /var/lib/copybot/data --out /var/lib/copybot/data
+    --year 2026 --data-dir /var/lib/copybot/data/live --out /var/lib/copybot/data/live
 ```
 
 Genera tres ficheros:

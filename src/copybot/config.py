@@ -273,6 +273,11 @@ class Config(_Strict):
     paths: PathsConfig = PathsConfig()
     logging: LoggingConfig = LoggingConfig()
 
+    @property
+    def run_dir(self) -> Path:
+        """Directorio de ejecución: paper y live NUNCA comparten estado, bloqueo, logs ni CSV."""
+        return self.paths.data_dir / self.mode.value
+
     @field_validator("leader_address")
     @classmethod
     def _address(cls, v: str) -> str:

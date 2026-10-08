@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Iterator
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -46,8 +47,8 @@ def write_config(tmp: Path, extra: str = "") -> Path:
     return cfg
 
 
-def store(tmp: Path) -> StateStore:
-    return StateStore(tmp / "data" / "state.json")
+def store(tmp: Path, mode: str = "paper") -> StateStore:
+    return StateStore(tmp / "data" / mode / "state.json")
 
 
 def answer(text: str):  # type: ignore[no-untyped-def]
@@ -100,14 +101,14 @@ def test_release_startup_profile_requires_confirmation(tmp_path: Path) -> None:
 
 def test_second_instance_is_refused(tmp_path: Path) -> None:
     cfg = write_config(tmp_path)
-    with InstanceLock(tmp_path / "data" / "copybot.lock"):
+    with InstanceLock(tmp_path / "data" / "paper" / "copybot.lock"):
         assert main(["--config", str(cfg), "--status"]) == EXIT_ERROR
 
 
 def test_corrupt_state_does_not_start(tmp_path: Path) -> None:
     cfg = write_config(tmp_path)
-    (tmp_path / "data").mkdir()
-    (tmp_path / "data" / "state.json").write_text("{roto")
+    (tmp_path / "data" / "paper").mkdir(parents=True)
+    (tmp_path / "data" / "paper" / "state.json").write_text("{roto")
     assert main(["--config", str(cfg), "--status"]) == EXIT_ERROR
 
 
@@ -169,12 +170,12 @@ def test_live_requires_written_confirmation_and_activates_startup_profile(
     assert main(live_args(tmp_path, "--check")) == EXIT_OK
     assert main(live_args(tmp_path, "--live"), prompt=answer("si")) == EXIT_USAGE
     assert "run_bot" not in calls
-    assert store(tmp_path).load().live_startup_profile is None  # no llegó a arrancar
+    assert store(tmp_path, "live").load().live_startup_profile is None  # no llegó a arrancar
     out = capsys.readouterr().out
     assert "DINERO REAL" in out and "ACTIVO (1x, 100 USD/activo)" in out
     assert main(live_args(tmp_path, "--live"), prompt=answer(LIVE_PHRASE)) == EXIT_OK
     assert calls["run_bot"] == {"live": True, "profile": True}
-    assert store(tmp_path).load().live_startup_profile is True
+    assert store(tmp_path, "live").load().live_startup_profile is True
 
 
 def test_config_change_after_check_blocks_live(tmp_path: Path, calls: dict[str, Any]) -> None:
@@ -217,9 +218,9 @@ def test_confirmation_persists_for_unattended_restarts(tmp_path: Path,
 
 def test_confirmation_is_invalidated_by_reset_halt(tmp_path: Path, calls: dict[str, Any]) -> None:
     _confirmed_live(tmp_path, calls)
-    st = store(tmp_path).load()
+    st = store(tmp_path, "live").load()
     st.halted, st.halt_reason = True, "prueba"
-    store(tmp_path).save(st)
+    store(tmp_path, "live").save(st)
     assert main(live_args(tmp_path, "--reset-halt"), prompt=answer(RESET_PHRASE)) == EXIT_OK
     assert main(live_args(tmp_path, "--live"), prompt=answer("")) == EXIT_USAGE
     assert "run_bot" not in calls
@@ -258,3 +259,50 @@ def test_key_change_invalidates_confirmation(tmp_path: Path, calls: dict[str, An
     assert "clave" in (live_confirmation_valid(st, cfg, other) or "")
     other_cfg = cfg.model_copy(update={"leader_address": "0x" + "cd" * 20})
     assert "configuración" in (live_confirmation_valid(st, other_cfg, creds) or "")
+
+
+# --- A3: paper y live no comparten nada ---
+
+
+def test_each_mode_has_its_own_directory(tmp_path: Path, calls: dict[str, Any]) -> None:
+    assert main(["--config", str(write_config(tmp_path)), "--once"]) == EXIT_OK
+    assert (tmp_path / "data" / "paper" / "copybot.lock").exists()
+    assert (tmp_path / "data" / "paper" / "logs").exists()
+    write_env(tmp_path)
+    assert main(live_args(tmp_path, "--check")) == EXIT_OK
+    assert (tmp_path / "data" / "live" / "state.json").exists()
+    assert not (tmp_path / "data" / "state.json").exists()
+
+
+def test_live_does_not_inherit_paper_state(tmp_path: Path, calls: dict[str, Any]) -> None:
+    """PoC E: el estado de paper (managed_symbols, pico, preexistentes) no llega a live."""
+    store(tmp_path).save(BotState(
+        mode="paper", managed_symbols={"PF_XBTUSD"}, peak_equity_usd=Decimal("572.13"),
+        preexisting_initialized=True, preexisting={"BTC": Decimal(1)}))
+    write_env(tmp_path)
+    assert main(live_args(tmp_path, "--check")) == EXIT_OK
+    assert main(live_args(tmp_path, "--live"), prompt=answer(LIVE_PHRASE)) == EXIT_OK
+    live = store(tmp_path, "live").load()
+    assert live.mode == "live" and live.managed_symbols == set()
+    assert live.peak_equity_usd is None and not live.preexisting_initialized
+    assert store(tmp_path).load().managed_symbols == {"PF_XBTUSD"}  # paper intacto
+
+
+def test_state_of_another_mode_refuses_to_start(tmp_path: Path, calls: dict[str, Any]) -> None:
+    """Un state.json de paper copiado al directorio de live (o al revés) no arranca."""
+    write_env(tmp_path)
+    store(tmp_path, "live").save(BotState(mode="paper", managed_symbols={"PF_XBTUSD"}))
+    assert main(live_args(tmp_path, "--check")) == EXIT_ERROR
+    assert main(live_args(tmp_path, "--live"), prompt=answer(LIVE_PHRASE)) == EXIT_ERROR
+    assert "run_bot" not in calls
+    store(tmp_path).save(BotState(mode="live"))
+    assert main(["--config", str(write_config(tmp_path)), "--once"]) == EXIT_ERROR
+
+
+def test_legacy_single_directory_state_is_not_silently_ignored(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "state.json").write_text("{}")
+    assert main(["--config", str(write_config(tmp_path)), "--status"]) == EXIT_USAGE
+    assert "diseño anterior" in capsys.readouterr().err

@@ -67,7 +67,8 @@ simulate_orderbook_slippage = true
 enabled = false
 
 [paths]
-data_dir = "data"                    # en el VPS: "/var/lib/copybot/data"
+data_dir = "data"                    # base; se usa <data_dir>/paper o <data_dir>/live
+                                     # (en el VPS: "/var/lib/copybot/data")
 
 [logging]
 external_rotation = false            # en el VPS: true (rota logrotate)

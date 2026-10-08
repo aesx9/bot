@@ -47,6 +47,18 @@ def test_state_roundtrip(tmp_path: Path) -> None:
     assert loaded.peak_equity_usd == D("612.5")  # Decimal exacto, no float
 
 
+def test_state_is_bound_to_the_mode_that_created_it(tmp_path: Path) -> None:
+    st = BotState()
+    st.bind_mode("paper")
+    st.bind_mode("paper")  # idempotente
+    store = StateStore(tmp_path / "state.json")
+    store.save(st)
+    loaded = store.load()
+    assert loaded.mode == "paper"
+    with pytest.raises(StateError, match="no comparten estado"):
+        loaded.bind_mode("live")
+
+
 def test_missing_state_is_a_fresh_state(tmp_path: Path) -> None:
     assert StateStore(tmp_path / "state.json").load() == BotState()
 

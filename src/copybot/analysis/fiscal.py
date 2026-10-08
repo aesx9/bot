@@ -301,7 +301,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="export_fiscal",
                                 description="Export fiscal en EUR (solo operaciones reales)")
     p.add_argument("--year", type=int, required=True)
-    p.add_argument("--data-dir", type=Path, default=Path("data"))
+    p.add_argument("--data-dir", type=Path, default=Path("data/live"),
+                   help="directorio de datos del modo live (por defecto data/live)")
     p.add_argument("--out", type=Path)
     p.add_argument("--ecb-csv", type=Path,
                    help="tipos del BCE en local (eurofxref-hist.csv o SDMX-CSV)")

@@ -43,6 +43,7 @@ def _dec(v: Any) -> Decimal | None:
 
 @dataclass
 class BotState:
+    mode: str | None = None  # "paper" | "live": el estado solo vale para el modo que lo creó
     halted: bool = False
     halt_reason: str = ""
     halted_at: str | None = None  # ISO UTC
@@ -70,9 +71,20 @@ class BotState:
     fills_seen: list[str] = field(default_factory=list)  # fill_id ya registrados (live)
     paper: dict[str, Any] | None = None  # cuenta simulada (PaperAccount.to_dict)
 
+    def bind_mode(self, mode: str) -> None:
+        """Ata el estado a un modo; si ya pertenecía a otro, el bot no arranca."""
+        if self.mode is None:
+            self.mode = mode
+        elif self.mode != mode:
+            raise StateError(
+                f"el estado es del modo {self.mode!r} y se está arrancando en {mode!r}: "
+                "paper y live no comparten estado (usa el directorio de datos de cada modo)"
+            )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "version": STATE_VERSION,
+            "mode": self.mode,
             "halted": self.halted,
             "halt_reason": self.halt_reason,
             "halted_at": self.halted_at,
@@ -103,6 +115,7 @@ class BotState:
         if d.get("version") != STATE_VERSION:
             raise StateError(f"versión de estado no soportada: {d.get('version')!r}")
         return cls(
+            mode=d.get("mode"),
             halted=bool(d["halted"]),
             halt_reason=str(d.get("halt_reason", "")),
             halted_at=d.get("halted_at"),

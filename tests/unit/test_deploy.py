@@ -54,7 +54,7 @@ def test_service_runs_from_src_with_service_paths() -> None:
 def test_logrotate_never_rotates_fiscal_csvs() -> None:
     text = (DEPLOY / "logrotate.conf").read_text()
     paths = [line for line in text.splitlines() if line.startswith("/")]
-    assert paths == ["/var/lib/copybot/data/logs/*.log {"]
+    assert paths == ["/var/lib/copybot/data/*/logs/*.log {"]
     assert "create 0600 copybot copybot" in text
 
 

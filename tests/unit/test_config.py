@@ -130,3 +130,12 @@ def test_config_is_immutable() -> None:
     cfg = make()
     with pytest.raises(ValidationError):
         cfg.mode = Mode.LIVE  # type: ignore[misc]
+
+
+def test_run_dir_is_separate_per_mode() -> None:
+    from pathlib import Path
+
+    paper = Config.model_validate({"leader_address": LEADER, "paths": {"data_dir": "/d"}})
+    live = Config.model_validate({"leader_address": LEADER, "mode": "live",
+                                  "paths": {"data_dir": "/d"}})
+    assert paper.run_dir == Path("/d/paper") and live.run_dir == Path("/d/live")
