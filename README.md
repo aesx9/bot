@@ -292,7 +292,7 @@ se niega a arrancar si no coincide):
 | `equity.csv` | Capital propio y del líder, cada 15 minutos. |
 | `kraken_fills.csv` | **Solo live:** todos los fills reales de la cuenta, con origen. |
 | `fees.csv` | **Solo live:** comisiones reales del log de cuenta de Kraken, con su moneda. |
-| `positions.csv` | **Solo live:** foto de las posiciones reales de Kraken (al cambiar y cada hora); el export fiscal las concilia con los fills. |
+| `positions.csv` | **Solo live:** foto de las posiciones reales de Kraken, tomada en cada actualización del libro (cada ciclo, también con el bot detenido) pero escrita solo si cambian o, sin cambios, cada hora; el export fiscal las concilia con los fills. |
 
 **Vigilancia externa (recomendada en live):** el bot es su propio único canal de alerta, así
 que si el proceso muere o el VPS cae nadie avisa. Dos defensas independientes del bot:
@@ -347,8 +347,17 @@ quedan abiertos en Kraken.
 
 **Después de una emergencia:** revisa el motivo con `--status` y los logs;
 borra `/var/lib/copybot/STOP` si lo creaste; ejecuta
+`sudo copybot-cli --sync-ledger` (ver abajo); ejecuta
 `sudo copybot-cli --reset-halt` (escribe `REANUDAR`). Después, repite el
 primer arranque live a mano (la confirmación se invalidó).
+
+**Libro fiscal con el bot detenido (`--sync-ledger`):** el bot actualiza el libro
+(`kraken_fills.csv`, `fees.csv`, `funding.csv`, `positions.csv`) al detenerse y en cada ciclo
+mientras sigue vivo reintentando un cierre, pero un bot detenido y parado no ve lo que pase
+después en la cuenta (un stop de catástrofe que salta, una liquidación, un cierre manual).
+`sudo copybot-cli --sync-ledger` lo trae: solo hace lecturas en Kraken (fills, log de cuenta y
+posiciones), no envía ni cancela órdenes y no quita la parada. Ejecútalo tras cualquier parada,
+antes de abandonar el bot y antes del export fiscal.
 
 ## Paradas automáticas y cómo reanudar
 

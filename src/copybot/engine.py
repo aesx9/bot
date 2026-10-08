@@ -21,12 +21,12 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 import httpx
 
@@ -71,6 +71,54 @@ CYCLE_ERRORS = (
     LeaderDataError, KrakenDataError, ExchangeError, SizingError, PlannerError,
     OrderUncertain, httpx.HTTPError, TimeoutError, OSError,
 )
+
+
+@dataclass
+class LedgerUpdate:
+    """Lo que una actualización del libro escribió en los CSV."""
+
+    fills: list[dict[str, Any]] = field(default_factory=list)
+    fees: int = 0
+    funding: int = 0
+    alerts: list[str] = field(default_factory=list)
+
+
+async def update_ledger(exchange: Exchange, recorder: CsvRecorder, now: datetime,
+                        positions: dict[str, Decimal] | None = None,
+                        positions_at: datetime | None = None,
+                        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+                        ) -> LedgerUpdate:
+    """Libro en dos fases: prepara lo nuevo (funding, fills, comisiones), lo escribe en los
+    CSV y SOLO entonces confirma cursores e ids vistos; en live añade además la foto de las
+    posiciones reales (positions.csv, que solo se escribe si cambian o cada hora).
+
+    Solo hace lecturas en el exchange. Si escribir falla, la siguiente llamada vuelve a
+    traerlo (los CSV no duplican por id). Las alertas se devuelven para que las envíe quien
+    llama."""
+    update = LedgerUpdate()
+    for event in await exchange.collect_funding(now):
+        recorder.funding(event, exchange.mode)
+        update.funding += 1
+    drain_ledger = getattr(exchange, "drain_ledger", None)
+    if drain_ledger is not None:
+        fills, fees = drain_ledger()
+        for f in fills:
+            recorder.kraken_fill(f)
+        for fee in fees:
+            recorder.fee(fee)
+        update.fills, update.fees = list(fills), len(fees)
+    commit_ledger = getattr(exchange, "commit_ledger", None)
+    if commit_ledger is not None:
+        commit_ledger()
+    drain_alerts = getattr(exchange, "drain_alerts", None)
+    if drain_alerts is not None:
+        update.alerts = list(drain_alerts())
+    if exchange.mode == "live":  # foto de las posiciones reales para conciliar
+        if positions is None:
+            positions = await exchange.positions()
+            positions_at = clock()  # el instante de la lectura, no el de empezar
+        recorder.positions_snapshot(positions_at or now, exchange.mode, positions)
+    return update
 
 
 class LoopTaskDied(RuntimeError):
@@ -286,6 +334,28 @@ class Engine:
         return CycleReport(Outcome.ERROR, detail)
 
     async def _cycle(self, trigger: str, leader_time: datetime | None) -> CycleReport:
+        report = await self._cycle_body(trigger, leader_time)
+        if report.outcome is Outcome.HALTED:
+            # Con el bot detenido el libro también se actualiza: fills de un cierre de
+            # emergencia, de un stop de catástrofe o de una liquidación, y foto de posiciones
+            await self._ledger_while_halted()
+        return report
+
+    async def _ledger_while_halted(self) -> None:
+        if getattr(self._ex, "commit_ledger", None) is None:  # solo live
+            return
+        try:
+            update = await update_ledger(self._ex, self._rec, self._now(), clock=self._now)
+            for text in update.alerts:
+                await self._alert.alert(Level.CRITICAL, text)
+            self._save()
+        except Exception as exc:
+            log.exception("no se pudo actualizar el libro fiscal con el bot detenido")
+            await self._best_effort(
+                Level.WARNING, f"libro fiscal sin actualizar tras la parada "
+                f"({type(exc).__name__}): ejecuta copybot-cli --sync-ledger")
+
+    async def _cycle_body(self, trigger: str, leader_time: datetime | None) -> CycleReport:
         stop = kill_switch_active(self._kill_dirs)
         if stop is not None:
             return await self._kill_switch(stop)
@@ -619,32 +689,16 @@ class Engine:
             await self._alert.alert(Level.CRITICAL, warning)
 
     async def _after_trading(self, leader_equity: Decimal, positions: dict[str, Decimal],
-                             positions_at: datetime) -> None:
+                             positions_at: datetime) -> LedgerUpdate:
         now = self._now()
-        for event in await self._ex.collect_funding(now):
-            self._rec.funding(event, self._ex.mode)
-        drain_ledger = getattr(self._ex, "drain_ledger", None)
-        if drain_ledger is not None:
-            fills, fees = drain_ledger()
-            for f in fills:
-                self._rec.kraken_fill(f)
-            for fee in fees:
-                self._rec.fee(fee)
-        # Los cursores solo avanzan cuando TODO lo anterior ya está en los CSV: si escribir
-        # falla, la siguiente lectura vuelve a traerlo (y los CSV no duplican por id)
-        commit_ledger = getattr(self._ex, "commit_ledger", None)
-        if commit_ledger is not None:
-            commit_ledger()
-        drain_alerts = getattr(self._ex, "drain_alerts", None)
-        if drain_alerts is not None:
-            for text in drain_alerts():
-                await self._alert.alert(Level.CRITICAL, text)
+        update = await update_ledger(self._ex, self._rec, now, positions, positions_at)
+        for text in update.alerts:
+            await self._alert.alert(Level.CRITICAL, text)
         last = self.state.last_equity_record_at
         if last is None or now.timestamp() - last >= float(self.cfg.timing.equity_snapshot_seconds):
             self._rec.equity(now, self._ex.mode, await self._ex.equity_usd(), leader_equity)
-            if self._ex.mode == "live":  # foto de las posiciones reales para conciliar
-                self._rec.positions_snapshot(positions_at, self._ex.mode, positions)
             self.state.last_equity_record_at = now.timestamp()
+        return update
 
     # --- bucle principal ---
 

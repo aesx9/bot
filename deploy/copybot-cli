@@ -4,6 +4,7 @@
 #   sudo copybot-cli --check
 #   sudo copybot-cli --live          (primer arranque live: pide la confirmación)
 #   sudo copybot-cli --once
+#   sudo copybot-cli --sync-ledger   (live: trae al libro fiscal lo pendiente, solo lecturas)
 #
 # Evita dos instancias: todo lo que no sea --status/--help exige que el
 # servicio esté parado. Además el bot toma un bloqueo (flock) sobre el

@@ -47,7 +47,7 @@ from copybot.credentials import (
     load_kraken_credentials,
     load_telegram_credentials,
 )
-from copybot.engine import CycleReport, Engine, LoopTaskDied, Outcome
+from copybot.engine import CycleReport, Engine, LedgerUpdate, LoopTaskDied, Outcome, update_ledger
 from copybot.exchange.base import Exchange, ExchangeError
 from copybot.exchange.kraken_auth import KrakenPrivateClient
 from copybot.exchange.kraken_public import KrakenMarketData
@@ -87,6 +87,9 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--release-startup-profile", action="store_true",
                    help="quitar el perfil de arranque live (1x, 100 USD/activo)")
     g.add_argument("--check", action="store_true", help="verificaciones previas a live")
+    g.add_argument("--sync-ledger", action="store_true",
+                   help="live: traer al libro fiscal fills, comisiones y funding pendientes "
+                        "(solo lecturas en Kraken; no envía órdenes)")
     p.add_argument("--live", action="store_true", help="operar con dinero real (ver README)")
     p.add_argument("--env", type=Path, default=Path(".env"), help="fichero de claves (live)")
     return p
@@ -262,6 +265,14 @@ async def run_check_command(cfg: Config, state: BotState, creds: KrakenCredentia
         )
 
 
+async def sync_ledger_command(cfg: Config, state: BotState,
+                              creds: KrakenCredentials) -> LedgerUpdate:
+    """--sync-ledger: solo lecturas en Kraken (fills, log de cuenta, posiciones)."""
+    async with httpx.AsyncClient(timeout=15) as http:
+        exchange = LiveExchange(KrakenPrivateClient(http, creds), state)
+        return await update_ledger(exchange, CsvRecorder(cfg.run_dir), datetime.now(UTC))
+
+
 async def live_open_positions(creds: KrakenCredentials) -> dict[str, Decimal]:
     """Posiciones abiertas hoy en la cuenta de Kraken Futures (solo lectura)."""
     async with httpx.AsyncClient(timeout=15) as http:
@@ -279,13 +290,16 @@ def main(argv: Sequence[str] | None = None, prompt: Callable[[str], str] = input
     if args.live and cfg.mode is not Mode.LIVE:
         print('--live exige mode = "live" en la configuración.', file=sys.stderr)
         return EXIT_USAGE
-    if cfg.mode is Mode.LIVE and not (args.live or args.check or args.status
-                                      or args.reset_halt or args.release_startup_profile):
+    if cfg.mode is Mode.LIVE and not (args.live or args.check or args.status or args.reset_halt
+                                      or args.release_startup_profile or args.sync_ledger):
         print('La configuración está en modo live: arranca con --live (o vuelve a "paper").',
               file=sys.stderr)
         return EXIT_USAGE
     if args.check and cfg.mode is not Mode.LIVE:
         print('--check es para live: pon mode = "live" en la configuración.', file=sys.stderr)
+        return EXIT_USAGE
+    if args.sync_ledger and cfg.mode is not Mode.LIVE:
+        print('--sync-ledger es para live: el libro fiscal solo existe en live.', file=sys.stderr)
         return EXIT_USAGE
 
     legacy_state = cfg.paths.data_dir / "state.json"
@@ -334,6 +348,21 @@ def main(argv: Sequence[str] | None = None, prompt: Callable[[str], str] = input
                 release_startup_profile(state)
                 store.save(state)
                 print("Perfil de arranque quitado: rigen los topes normales.")
+                return EXIT_OK
+            if args.sync_ledger:
+                if state.live_funding_cursor_ms is None:
+                    # Fijar aquí la línea base desactivaría el control de posiciones ajenas
+                    # del primer arranque live (M10) y no habría nada del bot que importar
+                    print("El bot nunca ha operado en live: no hay libro que sincronizar.",
+                          file=sys.stderr)
+                    return EXIT_USAGE
+                creds = load_kraken_credentials(args.env)
+                update = asyncio.run(sync_ledger_command(cfg, state, creds))
+                store.save(state)
+                print(f"Libro actualizado: {len(update.fills)} fills, {update.fees} comisiones, "
+                      f"{update.funding} pagos de funding.")
+                for text in update.alerts:
+                    print(f"AVISO: {text}")
                 return EXIT_OK
             if args.check:
                 creds = load_kraken_credentials(args.env)
