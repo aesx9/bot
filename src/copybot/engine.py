@@ -388,6 +388,17 @@ class Engine:
         now = self._now()
         for event in await self._ex.collect_funding(now):
             self._rec.funding(event, self._ex.mode)
+        drain_ledger = getattr(self._ex, "drain_ledger", None)
+        if drain_ledger is not None:
+            fills, fees = drain_ledger()
+            for f in fills:
+                self._rec.kraken_fill(f)
+            for fee in fees:
+                self._rec.fee(fee)
+        drain_alerts = getattr(self._ex, "drain_alerts", None)
+        if drain_alerts is not None:
+            for text in drain_alerts():
+                await self._alert.alert(Level.CRITICAL, text)
         last = self.state.last_equity_record_at
         if last is None or now.timestamp() - last >= float(self.cfg.timing.equity_snapshot_seconds):
             self._rec.equity(now, self._ex.mode, await self._ex.equity_usd(), leader_equity)

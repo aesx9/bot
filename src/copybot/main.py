@@ -19,6 +19,7 @@ import json
 import logging
 import sys
 from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +27,13 @@ import httpx
 
 from copybot import limits
 from copybot.alerts import Alerter, Level, LogAlerter, TelegramAlerter
-from copybot.checks import CheckReport, live_check_valid, run_check
+from copybot.checks import (
+    CheckReport,
+    confirmation_record,
+    live_check_valid,
+    live_confirmation_valid,
+    run_check,
+)
 from copybot.config import Config, ConfigError, Mode, load_config
 from copybot.credentials import (
     CredentialsError,
@@ -257,12 +264,21 @@ def main(argv: Sequence[str] | None = None, prompt: Callable[[str], str] = input
                     return EXIT_USAGE
                 first_profile = state.live_startup_profile is not False
                 print(live_summary(cfg, startup_profile=first_profile))
-                if not confirm(LIVE_PHRASE, prompt):
-                    print("Cancelado: no se opera.")
-                    return EXIT_USAGE
+                needs = live_confirmation_valid(state, cfg, creds)
+                if needs is None:
+                    confirmed_at = (state.live_confirmation or {}).get("confirmed_at")
+                    print(f"Confirmación vigente desde {confirmed_at}: config, clave y "
+                          "código sin cambios y sin paradas desde entonces.")
+                else:
+                    print(f"Hace falta confirmar: {needs}.")
+                    if not confirm(LIVE_PHRASE, prompt):
+                        print("Cancelado: no se opera.")
+                        return EXIT_USAGE
+                    state.live_confirmation = confirmation_record(cfg, creds, datetime.now(UTC))
                 activate_startup_profile_on_first_live(state)
                 store.save(state)
-                log.warning("ARRANQUE EN LIVE confirmado por el usuario")
+                log.warning("ARRANQUE EN LIVE (%s)",
+                            "confirmación vigente" if needs is None else "confirmado ahora")
                 return asyncio.run(run_bot(cfg, state, store, args.once, args.env, creds))
             log.info("arranque en modo paper (sin claves)")
             return asyncio.run(run_bot(cfg, state, store, args.once, args.env))

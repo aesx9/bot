@@ -63,6 +63,11 @@ class BotState:
     kill_switch_closed: bool = False  # ya se cerró lo gestionado por el fichero STOP
     live_check: dict[str, Any] | None = None  # resultado del último --check superado
     live_funding_cursor_ms: int | None = None
+    # Confirmación escrita de live: vale mientras no cambien config, clave ni código
+    # y no haya habido una parada o un --reset-halt
+    live_confirmation: dict[str, Any] | None = None
+    funding_sign_verified: bool = False  # el signo del funding real ya cuadró una vez
+    fills_seen: list[str] = field(default_factory=list)  # fill_id ya registrados (live)
     paper: dict[str, Any] | None = None  # cuenta simulada (PaperAccount.to_dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -85,6 +90,9 @@ class BotState:
             "kill_switch_closed": self.kill_switch_closed,
             "live_check": self.live_check,
             "live_funding_cursor_ms": self.live_funding_cursor_ms,
+            "live_confirmation": self.live_confirmation,
+            "funding_sign_verified": self.funding_sign_verified,
+            "fills_seen": self.fills_seen,
             "paper": self.paper,
         }
 
@@ -112,6 +120,9 @@ class BotState:
             kill_switch_closed=bool(d.get("kill_switch_closed", False)),
             live_check=d.get("live_check"),
             live_funding_cursor_ms=d.get("live_funding_cursor_ms"),
+            live_confirmation=d.get("live_confirmation"),
+            funding_sign_verified=bool(d.get("funding_sign_verified", False)),
+            fills_seen=list(d.get("fills_seen", [])),
             paper=d.get("paper"),
         )
 

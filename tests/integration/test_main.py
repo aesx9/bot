@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+import copybot.checks as checks_mod
 import copybot.main as main_mod
 from copybot.checks import CheckReport, config_hash, key_fingerprint
 from copybot.main import (
@@ -194,3 +195,66 @@ def test_paper_never_loads_keys(tmp_path: Path, calls: dict[str, Any]) -> None:
     write_env(tmp_path, 0o644)  # ni siquiera se mira
     assert main(["--config", str(write_config(tmp_path)), "--once"]) == EXIT_OK
     assert calls["run_bot"]["live"] is False
+
+
+def _confirmed_live(tmp_path: Path, calls: dict[str, Any]) -> None:
+    write_env(tmp_path)
+    assert main(live_args(tmp_path, "--check")) == EXIT_OK
+    assert main(live_args(tmp_path, "--live"), prompt=answer(LIVE_PHRASE)) == EXIT_OK
+    calls.pop("run_bot")
+
+
+def test_confirmation_persists_for_unattended_restarts(tmp_path: Path,
+                                                       calls: dict[str, Any]) -> None:
+    _confirmed_live(tmp_path, calls)
+
+    def no_stdin(_: str) -> str:  # como systemd: sin terminal
+        raise EOFError
+
+    assert main(live_args(tmp_path, "--live"), prompt=no_stdin) == EXIT_OK
+    assert calls["run_bot"]["live"] is True
+
+
+def test_confirmation_is_invalidated_by_reset_halt(tmp_path: Path, calls: dict[str, Any]) -> None:
+    _confirmed_live(tmp_path, calls)
+    st = store(tmp_path).load()
+    st.halted, st.halt_reason = True, "prueba"
+    store(tmp_path).save(st)
+    assert main(live_args(tmp_path, "--reset-halt"), prompt=answer(RESET_PHRASE)) == EXIT_OK
+    assert main(live_args(tmp_path, "--live"), prompt=answer("")) == EXIT_USAGE
+    assert "run_bot" not in calls
+
+
+def test_any_halt_invalidates_confirmation() -> None:
+    from copybot.risk import halt
+
+    st = BotState(live_confirmation={"config_hash": "x"})
+    halt(st, "drawdown")
+    assert st.live_confirmation is None
+
+
+def test_code_change_invalidates_confirmation(tmp_path: Path, calls: dict[str, Any],
+                                              monkeypatch: pytest.MonkeyPatch) -> None:
+    _confirmed_live(tmp_path, calls)
+    monkeypatch.setattr(checks_mod, "code_fingerprint", lambda: "otro-codigo")
+    assert main(live_args(tmp_path, "--live"), prompt=answer("")) == EXIT_USAGE
+    assert main(live_args(tmp_path, "--live"), prompt=answer(LIVE_PHRASE)) == EXIT_OK
+
+
+def test_key_change_invalidates_confirmation(tmp_path: Path, calls: dict[str, Any]) -> None:
+    from pydantic import SecretStr
+
+    from copybot.checks import live_confirmation_valid
+    from copybot.config import Config
+    from copybot.credentials import KrakenCredentials
+
+    cfg = Config.model_validate({"leader_address": LEADER, "mode": "live"})
+    creds = KrakenCredentials(api_key=SecretStr("a"), api_secret=SecretStr(SECRET))
+    st = BotState()
+    st.live_confirmation = checks_mod.confirmation_record(cfg, creds,
+                                                          __import__("datetime").datetime.now())
+    assert live_confirmation_valid(st, cfg, creds) is None
+    other = KrakenCredentials(api_key=SecretStr("b"), api_secret=SecretStr(SECRET))
+    assert "clave" in (live_confirmation_valid(st, cfg, other) or "")
+    other_cfg = cfg.model_copy(update={"leader_address": "0x" + "cd" * 20})
+    assert "configuración" in (live_confirmation_valid(st, other_cfg, creds) or "")

@@ -23,9 +23,11 @@ clave: si cambia cualquiera de las dos, hay que repetir --check.
 from __future__ import annotations
 
 import hashlib
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from copybot import limits
@@ -212,4 +214,54 @@ def live_check_valid(state: BotState, cfg: Config, creds: KrakenCredentials) -> 
         return "la configuración cambió desde el último --check"
     if chk.get("key_fingerprint") != key_fingerprint(creds):
         return "la clave de Kraken cambió desde el último --check"
+    return None
+
+
+# --- Confirmación escrita persistente para live ---
+
+
+def code_fingerprint() -> str:
+    """Hash del código del paquete (cubre también cambios sin commit)."""
+    root = Path(__file__).resolve().parent
+    h = hashlib.sha256()
+    for f in sorted(root.rglob("*.py")):
+        h.update(str(f.relative_to(root)).encode())
+        h.update(f.read_bytes())
+    return h.hexdigest()
+
+
+def git_commit() -> str | None:
+    """Commit actual (con sufijo -dirty si hay cambios sin commit), o None sin git."""
+    root = Path(__file__).resolve().parent
+    try:
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True,  # noqa: S607
+                              text=True, timeout=5, check=True).stdout.strip()
+        dirty = subprocess.run(["git", "status", "--porcelain", "--", "."], cwd=root,  # noqa: S607
+                               capture_output=True, text=True, timeout=5, check=True).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return head + ("-dirty" if dirty.strip() else "")
+
+
+def confirmation_record(cfg: Config, creds: KrakenCredentials, now: datetime) -> dict[str, Any]:
+    return {
+        "config_hash": config_hash(cfg),
+        "key_fingerprint": key_fingerprint(creds),
+        "code_hash": code_fingerprint(),
+        "commit": git_commit(),
+        "confirmed_at": now.isoformat(),
+    }
+
+
+def live_confirmation_valid(state: BotState, cfg: Config, creds: KrakenCredentials) -> str | None:
+    """None si la confirmación guardada sigue valiendo; si no, por qué hay que repetirla."""
+    c = state.live_confirmation
+    if not c:
+        return "no hay confirmación vigente (primer arranque, parada o --reset-halt)"
+    if c.get("config_hash") != config_hash(cfg):
+        return "la configuración cambió"
+    if c.get("key_fingerprint") != key_fingerprint(creds):
+        return "la clave de Kraken cambió"
+    if c.get("code_hash") != code_fingerprint() or c.get("commit") != git_commit():
+        return "el código cambió"
     return None

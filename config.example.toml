@@ -58,8 +58,8 @@ max_clock_skew_seconds = 5
 
 [paper]
 initial_collateral_eur = 500         # colateral simulado en EUR
-eur_haircut_pct = 0                  # ayuda de Kraken (EEE): 0 % para EUR
-taker_fee_pct = 0.05                 # no verificable por API: confírmalo en tu cuenta
+eur_haircut_pct = 2.2                # prudente: ejemplo de la documentación de Kraken
+taker_fee_pct = 0.05                 # verificado: nivel 1, taker 0,05 %
 simulate_funding = true
 simulate_orderbook_slippage = true
 

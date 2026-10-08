@@ -43,6 +43,7 @@ def halt(state: BotState, reason: str, now: datetime | None = None) -> None:
         state.halted = True
         state.halt_reason = reason
         state.halted_at = (now or datetime.now(UTC)).isoformat()
+    state.live_confirmation = None  # tras cualquier parada hay que volver a confirmar
 
 
 def reset_halt(state: BotState) -> None:
@@ -53,6 +54,7 @@ def reset_halt(state: BotState) -> None:
     state.consecutive_errors = 0
     state.paced_streak = 0
     state.kill_switch_closed = False
+    state.live_confirmation = None
     state.sanity = SanityState()
 
 

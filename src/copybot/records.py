@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 from copybot.exchange.base import FundingEvent
 from copybot.redaction import redact
@@ -29,6 +30,11 @@ FUNDING_HEADER = (
     "timestamp_utc", "modo", "mercado", "posicion", "tasa_usd_por_unidad",
     "importe_usd", "pagado_usd", "cobrado_usd",
 )
+KRAKEN_FILLS_HEADER = (
+    "timestamp_utc", "mercado", "lado", "tamano", "precio", "tipo_fill", "origen",
+    "cli_ord_id", "fill_id", "order_id",
+)
+FEES_HEADER = ("timestamp_utc", "mercado", "comision", "moneda", "concepto", "booking_uid")
 EQUITY_HEADER = ("timestamp_utc", "modo", "capital_propio_usd", "capital_lider_usd")
 
 
@@ -98,6 +104,20 @@ class CsvRecorder:
         received = e.amount_usd if e.amount_usd > 0 else Decimal(0)
         self._append("funding.csv", FUNDING_HEADER, (
             e.timestamp, mode, e.symbol, e.position, e.rate, e.amount_usd, paid, received,
+        ))
+
+    def kraken_fill(self, f: dict[str, Any]) -> None:
+        """Fill REAL de Kraken (solo live): base del export fiscal. Incluye stops de
+        catástrofe, liquidaciones y operaciones manuales, marcados en 'origen'."""
+        self._append("kraken_fills.csv", KRAKEN_FILLS_HEADER, (
+            f["timestamp"], f["symbol"], f["side"], f["size"], f["price"], f["fill_type"],
+            f["origin"], f["cli_ord_id"], f["fill_id"], f["order_id"],
+        ))
+
+    def fee(self, f: dict[str, Any]) -> None:
+        """Comisión real del log de cuenta de Kraken (solo live)."""
+        self._append("fees.csv", FEES_HEADER, (
+            f["timestamp"], f["symbol"], f["fee"], f["currency"], f["info"], f["booking_uid"],
         ))
 
     def equity(self, ts: datetime, mode: str, mine: Decimal, leader: Decimal | None) -> None:

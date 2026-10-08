@@ -149,10 +149,61 @@ async def test_funding_from_account_log(env: Env) -> None:
     assert await env.live.collect_funding(NOW + timedelta(seconds=60)) == []  # limitado
     events = await env.live.collect_funding(NOW + timedelta(minutes=6))
     assert [(e.symbol, e.amount_usd) for e in events] == [(BTC, D("-0.5")), (BTC, D("0.2"))]
-    params = [p for _, path, p in env.kraken.calls if "account-log" in path][-1]
-    assert params["info"] == "funding rate change" and params["sort"] == "asc"
+    query = [p for _, path, p in env.kraken.calls if "account-log" in path][-1]
+    assert query["sort"] == "asc"
     again = await env.live.collect_funding(NOW + timedelta(minutes=12))
     assert again == []  # el cursor avanzó: sin duplicados
+
+
+async def test_funding_sign_check_alerts_on_mismatch_and_verifies_once(env: Env) -> None:
+    start = int(NOW.timestamp() * 1000)
+    env.kraken.positions = [{"symbol": BTC, "side": "long", "size": "1", "price": "80000"}]
+    await env.live.positions()
+    await env.live.collect_funding(NOW)  # fija el cursor
+    # Largo con tasa positiva: debe PAGAR. Primero un cobro (incoherente), luego un pago.
+    env.kraken.logs = [log_entry(start + 1000, "100", "100.5"),
+                       log_entry(start + 2000, "100.5", "100.0")]
+    await env.live.collect_funding(NOW + timedelta(minutes=6))
+    alerts = env.live.drain_alerts()
+    assert len(alerts) == 1 and "SIGNO DEL FUNDING" in alerts[0] and "pago" in alerts[0]
+    assert env.state.funding_sign_verified  # el segundo sí cuadró
+    assert env.live.drain_alerts() == []
+
+
+async def test_realized_funding_and_balance_disagreement_alerts(env: Env) -> None:
+    start = int(NOW.timestamp() * 1000)
+    await env.live.collect_funding(NOW)
+    entry = log_entry(start + 1000, "100", "99")
+    entry["realized_funding"] = "1"
+    env.kraken.logs = [entry]
+    await env.live.collect_funding(NOW + timedelta(minutes=6))
+    assert any("signos distintos" in a for a in env.live.drain_alerts())
+
+
+async def test_ledger_records_real_fills_and_fees_but_not_history(env: Env) -> None:
+    start = int(NOW.timestamp() * 1000)
+    env.kraken.fills = [{"cliOrdId": None, "fillTime": "2026-10-01T00:00:00Z", "fillType": "taker",
+                         "fill_id": "viejo", "order_id": "o", "price": "1", "side": "buy",
+                         "size": "1", "symbol": "PF_SOLUSD"}]
+    await env.live.collect_funding(NOW)  # primer arranque: lo anterior no se registra
+    assert env.live.drain_ledger() == ([], [])
+    await env.live.send_order(req(cli="c-bot"))
+    env.kraken.fills.append({"cliOrdId": "cs-x", "fillTime": "2026-10-08T12:03:00Z",
+                             "fillType": "taker", "fill_id": "stop", "order_id": "o2",
+                             "price": "80", "side": "sell", "size": "2", "symbol": "PF_SOLUSD"})
+    env.kraken.fills.append({"cliOrdId": None, "fillTime": "2026-10-08T12:04:00Z",
+                             "fillType": "liquidation", "fill_id": "liq", "order_id": "o3",
+                             "price": "70", "side": "sell", "size": "1", "symbol": "PF_SOLUSD"})
+    env.kraken.logs = [{"_ms": start + 5000, "date": "2026-10-08T12:00:05+00:00",
+                        "info": "futures trade", "contract": "pf_solusd", "fee": "0.1",
+                        "collateral": "USD", "booking_uid": "b1"}]
+    await env.live.collect_funding(NOW + timedelta(minutes=6))
+    fills, fees = env.live.drain_ledger()
+    assert [(f["fill_id"], f["origin"]) for f in fills] == [
+        ("f", "bot"), ("stop", "stop_catastrofe"), ("liq", "liquidación")]
+    assert [(f["symbol"], f["fee"], f["currency"]) for f in fees] == [(SOL, D("0.1"), "USD")]
+    await env.live.collect_funding(NOW + timedelta(minutes=12))
+    assert env.live.drain_ledger()[0] == []  # sin duplicados
 
 
 # --- stops de catástrofe ---

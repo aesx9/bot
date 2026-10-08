@@ -89,6 +89,10 @@ class LiveExchange:
         self._state = state
         self._now = now
         self._last_funding_poll: datetime | None = None
+        self._positions: dict[str, Decimal] = {}  # última lectura, para el signo del funding
+        self.alerts: list[str] = []  # avisos para el motor (se vacían con drain_alerts)
+        self.ledger_fills: list[dict[str, Any]] = []  # fills reales nuevos (kraken_fills.csv)
+        self.ledger_fees: list[dict[str, Any]] = []  # comisiones del log (fees.csv)
 
     # --- cuenta ---
 
@@ -123,7 +127,17 @@ class LiveExchange:
                 raise ExchangeError("openpositions: lado desconocido")
             if size:
                 out[str(p["symbol"]).upper()] = size if p["side"] == "long" else -size
+        self._positions = dict(out)
         return out
+
+    def drain_alerts(self) -> list[str]:
+        out, self.alerts = self.alerts, []
+        return out
+
+    def drain_ledger(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        fills, fees = self.ledger_fills, self.ledger_fees
+        self.ledger_fills, self.ledger_fees = [], []
+        return fills, fees
 
     # --- órdenes ---
 
@@ -172,36 +186,104 @@ class LiveExchange:
             return None  # ejecutada pero sin fills visibles todavía, o aún viva: esperar
         return None
 
-    # --- funding real ---
+    # --- funding, comisiones y fills reales (libro para el export fiscal) ---
 
     async def collect_funding(self, now: datetime) -> list[FundingEvent]:
+        """Cada FUNDING_POLL_SECONDS: funding y comisiones del log de cuenta y fills
+        nuevos de /fills. Los fills y comisiones quedan en ledger_fills/ledger_fees."""
         if (self._last_funding_poll is not None
                 and (now - self._last_funding_poll).total_seconds() < FUNDING_POLL_SECONDS):
             return []
         self._last_funding_poll = now
+        await self._poll_fills()
         cursor = self._state.live_funding_cursor_ms
         if cursor is None:  # primer arranque: no se importa el histórico anterior
             self._state.live_funding_cursor_ms = int(now.timestamp() * 1000)
             return []
         payload = await self._c.request("GET", "/api/history/v3/account-log", [
-            ("since", str(cursor)), ("sort", "asc"), ("count", "25"),
-            ("info", "funding rate change"),
+            ("since", str(cursor)), ("sort", "asc"), ("count", "50"),
+            ("info", "funding rate change"), ("info", "futures trade"),
+            ("info", "futures liquidation"), ("info", "futures partial liquidation"),
         ])
         events: list[FundingEvent] = []
         for e in payload.get("logs") or []:
-            if not isinstance(e, dict) or e.get("info") != "funding rate change":
+            if not isinstance(e, dict):
                 continue
             ts = datetime.fromisoformat(str(e["date"]).replace("Z", "+00:00"))
-            if e.get("old_balance") is not None and e.get("new_balance") is not None:
-                amount = _dec(e["new_balance"], "funding") - _dec(e["old_balance"], "funding")
-            else:
-                amount = _dec(e.get("realized_funding") or 0, "funding")
-            rate = _dec(e.get("funding_rate") or 0, "funding")
-            events.append(FundingEvent(ts, str(e.get("contract") or "").upper(), ZERO, rate,
-                                       amount))
             cursor = max(cursor, int(ts.timestamp() * 1000) + 1)
+            symbol = str(e.get("contract") or "").upper()
+            if e.get("info") == "funding rate change":
+                events.append(self._funding_event(e, ts, symbol))
+            elif e.get("fee") is not None:
+                self.ledger_fees.append({
+                    "timestamp": ts, "symbol": symbol, "fee": _dec(e["fee"], "comisión"),
+                    "currency": str(e.get("collateral") or e.get("asset") or "").upper(),
+                    "info": str(e.get("info")), "booking_uid": str(e.get("booking_uid") or ""),
+                })
         self._state.live_funding_cursor_ms = cursor
         return events
+
+    def _funding_event(self, e: Mapping[str, Any], ts: datetime, symbol: str) -> FundingEvent:
+        rate = _dec(e.get("funding_rate") or 0, "funding")
+        realized = _dec(e.get("realized_funding") or 0, "funding")
+        if e.get("old_balance") is not None and e.get("new_balance") is not None:
+            amount = _dec(e["new_balance"], "funding") - _dec(e["old_balance"], "funding")
+        else:
+            amount = realized
+        position = self._positions.get(symbol, ZERO)
+        self._check_funding_sign(symbol, position, rate, amount, realized)
+        return FundingEvent(ts, symbol, position, rate, amount)
+
+    def _check_funding_sign(self, symbol: str, position: Decimal, rate: Decimal,
+                            amount: Decimal, realized: Decimal) -> None:
+        """Con tasa positiva pagan los largos. Si el dato real no cuadra, alerta:
+        el registro fiscal de funding pagado/cobrado dependería de ello."""
+        problems = []
+        if position and rate and amount:
+            expected_paid = (position > 0) == (rate > 0)
+            if expected_paid != (amount < 0):
+                problems.append(
+                    f"{symbol}: funding {amount} USD con posición {position} y tasa {rate}; "
+                    f"se esperaba {'pago' if expected_paid else 'cobro'}"
+                )
+        if realized and amount and (realized > 0) != (amount > 0):
+            problems.append(f"{symbol}: realized_funding ({realized}) y la variación de saldo "
+                            f"({amount}) tienen signos distintos")
+        if problems:
+            self.alerts.extend("SIGNO DEL FUNDING: " + p + ". Revisa funding.csv" for p in problems)
+        elif position and rate and amount and not self._state.funding_sign_verified:
+            self._state.funding_sign_verified = True
+            log.warning("signo del funding real verificado con %s (tasa %s, importe %s)",
+                        symbol, rate, amount)
+
+    async def _poll_fills(self) -> None:
+        payload = await self._c.request("GET", f"{API}/fills")
+        first_run = self._state.live_funding_cursor_ms is None
+        seen = set(self._state.fills_seen)
+        new_ids: list[str] = []
+        rows = sorted((f for f in payload.get("fills") or [] if isinstance(f, dict)),
+                      key=lambda f: str(f.get("fillTime")))
+        for f in rows:
+            fid = str(f.get("fill_id") or "")
+            if not fid or fid in seen:
+                continue
+            seen.add(fid)
+            new_ids.append(fid)
+            if first_run:  # fills anteriores al primer arranque live: no son del bot
+                continue
+            cli = str(f.get("cliOrdId") or "")
+            origin = ("liquidación" if "iquidation" in str(f.get("fillType"))
+                      else "stop_catastrofe" if cli.startswith(STOP_PREFIX)
+                      else "bot" if cli else "manual")
+            self.ledger_fills.append({
+                "timestamp": datetime.fromisoformat(str(f["fillTime"]).replace("Z", "+00:00")),
+                "symbol": str(f.get("symbol")).upper(), "side": str(f.get("side")),
+                "size": _dec(f.get("size"), "fill"), "price": _dec(f.get("price"), "fill"),
+                "fill_type": str(f.get("fillType")), "cli_ord_id": cli, "fill_id": fid,
+                "order_id": str(f.get("order_id") or ""), "origin": origin,
+            })
+        # /fills solo devuelve los 100 últimos: basta con recordar algo más que eso
+        self._state.fills_seen = (self._state.fills_seen + new_ids)[-500:]
 
     # --- stops de catástrofe ---
 

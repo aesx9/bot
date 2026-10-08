@@ -254,10 +254,9 @@ pública real:
   especifica. La ayuda de Kraken para el EEE (no accesible desde el entorno
   de desarrollo, leída vía buscador) indica 0 % de haircut y 0 % de
   conversión para EUR. Queda parametrizado (`paper.eur_haircut_pct = 0`).
-- **Comisión taker:** el endpoint de comisiones está obsoleto desde
-  2026-06-22 y la tabla oficial no es accesible desde aquí. Fuentes de
-  terceros dan 0,05 % para el nivel inicial: valor por defecto
-  parametrizado, a confirmar en la cuenta real.
+- **Comisión taker:** **VERIFICADO** por el usuario en su cuenta (nivel 1:
+  taker 0,05 %, maker 0,02 %). El paper usa 0,05 % porque todas las órdenes
+  son taker (IOC).
 
 ## Decisiones antes de la fase 5
 - Demo, comisión taker y haircut EUR: sin dato del usuario todavía. Se
@@ -323,3 +322,29 @@ pública real:
 - **Lista blanca:** el cliente privado solo puede llamar a 9 endpoints, y
   ninguno mueve fondos. Un test recorre todo `src/` en busca de rutas de
   retiro o transferencia.
+
+## Decisiones antes de la fase 6
+- Comisión: verificada (nivel 1, taker 0,05 %, maker 0,02 %).
+- El kill switch cierra todo lo gestionado por defecto. Confirmado.
+- `rank_leaders`: X = 8 posiciones simultáneas como máximo. Confirmado.
+- Capital live = `marginEquity`. Confirmado.
+- Haircut EUR en paper: 2,2 %.
+- Confirmación escrita de live persistente. Se invalida si cambia la config,
+  la clave o el código (hash del código del paquete más el commit de git,
+  con sufijo `-dirty` si hay cambios sin commit), tras cualquier parada y
+  tras `--reset-halt`. Así systemd puede reiniciar el bot tras una caída
+  sin terminal.
+- Comisión real en live: desde el log de cuenta de Kraken (`fees.csv`).
+- Signo del funding: en cada entrada real se comprueba que, con tasa
+  positiva, el largo paga y el corto cobra, y que `realized_funding` y la
+  variación de saldo tienen el mismo signo. Si algo no cuadra, alerta
+  crítica. La primera vez que cuadra queda registrado en el estado
+  (`funding_sign_verified`).
+- Libro real (solo live): `kraken_fills.csv` guarda todos los fills reales
+  de la cuenta, incluidos stops de catástrofe, liquidaciones y operaciones
+  manuales, cada uno con su origen. Los fills anteriores al primer
+  arranque live no se importan. Es la base del export fiscal.
+- `export_fiscal`: el resultado se pasa de USD a EUR con el tipo de
+  referencia diario del BCE (EUR/USD) en la fecha de cada liquidación,
+  indicando la fuente en el fichero. Funding pagado y cobrado en columnas
+  separadas. Las operaciones paper se excluyen siempre.
