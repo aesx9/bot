@@ -40,7 +40,7 @@
 | A2 | Alta | Posiciones huérfanas si el ciclo se aborta a mitad de ejecución | J, J2 | resuelto (`9770f80`) |
 | A3 | Alta | Estado compartido entre paper y live | E | resuelto (`34176e2`) |
 | A4 | Alta | Los fills del primer ciclo live no entran en el libro fiscal | A | resuelto (`d59f8ef`) |
-| A5 | Alta | Cierre de emergencia frágil | I, K | pendiente |
+| A5 | Alta | Cierre de emergencia frágil | I, K | resuelto (`e9a7925`) |
 | M1 | Media | Tamaños y precios en notación científica en `sendorder` | formato | pendiente |
 | M2 | Media | Stops de catástrofe: tarde, reemplazo no atómico, sobreviven al cierre | G, G2, L | pendiente |
 | M3 | Media | Libro fiscal sin deduplicación ni conciliación | D | pendiente |
@@ -128,7 +128,7 @@ la pérdida; las altas debilitan justo las redes de seguridad.
 - **Regresión:** tests/integration/test_live_exchange.py::test_first_cycle_fills_reach_the_fiscal_ledger y ::test_prepare_ledger_is_idempotent_and_runs_once
 
 ### A5 — Cierre de emergencia frágil
-**Gravedad:** alta · **Estado:** pendiente
+**Gravedad:** alta · **Estado:** resuelto en `e9a7925`
 
 - **Dónde:** `engine.py` (`_kill_switch`, `_close_all_managed`), `planner.py`,
   `executor.py`.
@@ -138,6 +138,7 @@ la pérdida; las altas debilitan justo las redes de seguridad.
   porque se persiste antes de enviar.
 - **Corrección:** cerrar símbolo a símbolo con errores aislados; reintentar
   mientras queden posiciones; en emergencia, enviar aunque falle el guardado.
+- **Regresión:** tests/integration/test_emergency.py (6 tests)
 
 ---
 
