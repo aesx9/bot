@@ -160,6 +160,10 @@ class RiskConfig(_Strict):
     max_orders_per_minute: int = Field(default=10, gt=0)
     max_notional_per_hour_usd: Dec = Field(default=Decimal("2000"), gt=0)
     max_consecutive_errors: int = Field(default=5, gt=0)
+    # Ciclos seguidos con órdenes aplazadas por el límite/min (fuera de la
+    # sincronización inicial); al superarse, el bot se detiene
+    max_consecutive_paced_cycles: int = Field(default=3, gt=0)
+    close_all_on_kill_switch: bool = True
     catastrophe_stop_enabled: bool = True  # solo aplica en live
     catastrophe_stop_pct: Dec = Field(default=Decimal("20"))
 
@@ -173,6 +177,8 @@ class RiskConfig(_Strict):
             raise ValueError("max_notional_per_hour_usd supera el tope absoluto")
         if self.max_consecutive_errors > limits.HARD_MAX_CONSECUTIVE_ERRORS:
             raise ValueError("max_consecutive_errors supera el tope absoluto")
+        if self.max_consecutive_paced_cycles > limits.HARD_MAX_PACED_CYCLES:
+            raise ValueError("max_consecutive_paced_cycles supera el tope absoluto")
         if not (
             limits.HARD_MIN_CATASTROPHE_STOP_PCT
             <= self.catastrophe_stop_pct

@@ -59,6 +59,10 @@ class BotState:
     # None = nunca se ha arrancado en live; True = perfil de arranque activo
     live_startup_profile: bool | None = None
     last_equity_record_at: float | None = None  # epoch
+    paced_streak: int = 0  # ciclos seguidos aplazando órdenes por el límite/min
+    kill_switch_closed: bool = False  # ya se cerró lo gestionado por el fichero STOP
+    live_check: dict[str, Any] | None = None  # resultado del último --check superado
+    live_funding_cursor_ms: int | None = None
     paper: dict[str, Any] | None = None  # cuenta simulada (PaperAccount.to_dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -77,6 +81,10 @@ class BotState:
             "breaker_log": [[t, str(n)] for t, n in self.breaker_log],
             "live_startup_profile": self.live_startup_profile,
             "last_equity_record_at": self.last_equity_record_at,
+            "paced_streak": self.paced_streak,
+            "kill_switch_closed": self.kill_switch_closed,
+            "live_check": self.live_check,
+            "live_funding_cursor_ms": self.live_funding_cursor_ms,
             "paper": self.paper,
         }
 
@@ -100,6 +108,10 @@ class BotState:
             breaker_log=[(float(t), Decimal(n)) for t, n in d.get("breaker_log", [])],
             live_startup_profile=d.get("live_startup_profile"),
             last_equity_record_at=d.get("last_equity_record_at"),
+            paced_streak=int(d.get("paced_streak", 0)),
+            kill_switch_closed=bool(d.get("kill_switch_closed", False)),
+            live_check=d.get("live_check"),
+            live_funding_cursor_ms=d.get("live_funding_cursor_ms"),
             paper=d.get("paper"),
         )
 

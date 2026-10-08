@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -109,6 +109,9 @@ class Engine:
         startup_profile: bool = False,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
         breaker_clock: Callable[[], float] | None = None,
+        emergency_rounds: int = 5,
+        emergency_pause_seconds: float = 2,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self.cfg = cfg
         self.state = state
@@ -128,6 +131,11 @@ class Engine:
             recorder=recorder, cfg=cfg.execution, now=now,
         )
         self._mapper: SymbolMapper | None = None
+        self._initial_sync = True  # hasta el primer ciclo sin órdenes aplazadas
+        self._sync_cycles = 0
+        self._emergency_rounds = emergency_rounds
+        self._emergency_pause = emergency_pause_seconds
+        self._sleep = sleep
         self._mapper_markets: set[str] = set()
         self._lock = asyncio.Lock()
         self.last_report: CycleReport | None = None
@@ -162,9 +170,7 @@ class Engine:
     async def _cycle(self, trigger: str, leader_time: datetime | None) -> CycleReport:
         stop = kill_switch_active(self._kill_dirs)
         if stop is not None:
-            if self.state.halted:
-                return CycleReport(Outcome.HALTED, self.state.halt_reason)
-            return await self._halt(f"kill switch: existe {stop}")
+            return await self._kill_switch(stop)
         if self.state.halted:
             return CycleReport(Outcome.HALTED, self.state.halt_reason)
 
@@ -249,12 +255,18 @@ class Engine:
             leader_prices={s: snap.mids[c] for s, c in coin_for.items() if c in snap.mids},
             leader_time=leader_time,
         )
-        results = await self._executor.execute(
+        execution = await self._executor.execute(
             actions, markets=markets, positions=current, ctx=ctx)
+        results = execution.results
 
         after = await self._ex.positions()
         state.managed_symbols = {s for s in managed if after.get(s) or s in sized.targets}
         await self._after_trading(snap.equity_usd)
+        await self._sync_protective_stops(after, markets)
+
+        paced = await self._track_pacing(execution.deferred)
+        if paced is not None:
+            return paced
 
         rejected = [r for r in results if r.status.value == "rejected"]
         if rejected:
@@ -263,7 +275,40 @@ class Engine:
             )
         record_cycle_ok(state)
         self._save()
-        return CycleReport(Outcome.OK, f"{len(actions)} acciones", orders=len(results))
+        detail = f"{len(actions)} acciones"
+        if execution.deferred:
+            detail += f", {execution.deferred} aplazadas por el límite de órdenes/min"
+        return CycleReport(Outcome.OK, detail, orders=len(results))
+
+    async def _track_pacing(self, deferred: int) -> CycleReport | None:
+        """Aplazar órdenes es normal en la sincronización inicial (primer reparto
+        tras arrancar el proceso); fuera de ella, N ciclos seguidos detienen el bot."""
+        state, risk = self.state, self.cfg.risk
+        if not deferred:
+            self._initial_sync = False
+            state.paced_streak = 0
+            return None
+        if self._initial_sync:
+            self._sync_cycles += 1
+            if self._sync_cycles > limits.INITIAL_SYNC_MAX_CYCLES:
+                return await self._halt(
+                    f"la sincronización inicial sigue aplazando órdenes tras "
+                    f"{limits.INITIAL_SYNC_MAX_CYCLES} ciclos"
+                )
+            return None
+        state.paced_streak += 1
+        limit = min(risk.max_consecutive_paced_cycles, limits.HARD_MAX_PACED_CYCLES)
+        if state.paced_streak > limit:
+            return await self._halt(
+                f"límite de órdenes por minuto alcanzado en {state.paced_streak} ciclos "
+                "seguidos fuera de la sincronización inicial"
+            )
+        await self._alert.alert(
+            Level.WARNING,
+            f"límite de órdenes/min alcanzado ({state.paced_streak}/{limit} ciclos seguidos): "
+            f"{deferred} órdenes aplazadas",
+        )
+        return None
 
     async def _drawdown_stop(
         self, dd: Decimal, current: dict[str, Decimal], managed: set[str],
@@ -271,16 +316,73 @@ class Engine:
     ) -> CycleReport:
         reason = f"drawdown del {dd:.2f} % desde el máximo ({self.state.peak_equity_usd} USD)"
         if self.cfg.risk.close_all_on_drawdown and current:
-            actions = plan(targets={}, current=current, managed=managed, prices=prices,
-                           markets=markets, cfg=self.cfg.planner)
+            reason += "; " + await self._close_all_managed()
+        return await self._halt(reason)
+
+    async def _kill_switch(self, stop: Path) -> CycleReport:
+        state = self.state
+        reason = f"kill switch: existe {stop}"
+        closed_now = False
+        if self.cfg.risk.close_all_on_kill_switch and not state.kill_switch_closed:
+            reason += "; " + await self._close_all_managed()
+            state.kill_switch_closed = True
+            closed_now = True
+        if state.halted:
+            self._save()
+            if closed_now:
+                await self._alert.alert(Level.CRITICAL, reason)
+            return CycleReport(Outcome.HALTED, state.halt_reason)
+        return await self._halt(reason)
+
+    async def _close_all_managed(self) -> str:
+        """Cierre de emergencia completo: rondas de órdenes reduceOnly sin límite del
+        circuit breaker hasta que no quede nada gestionado abierto (o se agoten)."""
+        last_error = ""
+        for attempt in range(self._emergency_rounds):
+            if attempt:
+                await self._sleep(self._emergency_pause)
             try:
+                markets = await self._market.instruments()
+                tickers = await self._market.tickers()
+                positions = await self._ex.positions()
+                current = {s: p for s, p in positions.items()
+                           if p and s in self.state.managed_symbols}
+                if not current:
+                    self.state.managed_symbols = set()
+                    return "posiciones gestionadas cerradas"
+                prices = {s: tickers[s].mark_price for s in current if s in tickers}
+                if set(prices) != set(current):
+                    raise KrakenDataError("sin precio para cerrar algún mercado")
+                actions = plan(targets={}, current=current, managed=set(current),
+                               prices=prices, markets=markets, cfg=self.cfg.planner)
                 await self._executor.execute(
                     actions, markets=markets, positions=current,
                     ctx=ExecutionContext(mode=self._ex.mode), emergency=True)
-                reason += "; posiciones gestionadas cerradas"
             except CYCLE_ERRORS as exc:
-                reason += f"; ERROR al cerrar posiciones ({type(exc).__name__}): revisa a mano"
-        return await self._halt(reason)
+                last_error = f"{type(exc).__name__}: {exc}"
+                log.error("cierre de emergencia, intento %d: %s", attempt + 1, last_error)
+        try:
+            left = {s: p for s, p in (await self._ex.positions()).items()
+                    if p and s in self.state.managed_symbols}
+        except CYCLE_ERRORS:
+            left = {s: Decimal(0) for s in self.state.managed_symbols}
+        if not left:
+            self.state.managed_symbols = set()
+            return "posiciones gestionadas cerradas"
+        self.state.managed_symbols = set(left)
+        return (f"ERROR: siguen abiertas {sorted(left)} tras {self._emergency_rounds} "
+                f"intentos ({last_error}); CIÉRRALAS A MANO")
+
+    async def _sync_protective_stops(
+        self, positions: dict[str, Decimal], markets: dict[str, MarketSpec]
+    ) -> None:
+        """Stops de catástrofe en el exchange (solo live, si el exchange los soporta)."""
+        sync = getattr(self._ex, "sync_catastrophe_stops", None)
+        if sync is None or not self.cfg.risk.catastrophe_stop_enabled:
+            return
+        managed = {s: p for s, p in positions.items() if p and s in self.state.managed_symbols}
+        for warning in await sync(managed, markets, self.cfg.risk.catastrophe_stop_pct):
+            await self._alert.alert(Level.CRITICAL, warning)
 
     async def _after_trading(self, leader_equity: Decimal) -> None:
         now = self._now()

@@ -119,6 +119,7 @@ def test_halt_is_persistent_and_reset_clears_counters(tmp_path: Path) -> None:
     assert reloaded.halted and reloaded.halt_reason == "prueba"
     reset_halt(reloaded)
     assert not reloaded.halted and reloaded.consecutive_errors == 0
+    assert reloaded.paced_streak == 0 and not reloaded.kill_switch_closed
     assert reloaded.sanity == SanityState()
 
 
@@ -151,15 +152,15 @@ class Clock:
         return self.t
 
 
-def test_circuit_breaker_orders_per_minute() -> None:
+def test_circuit_breaker_orders_per_minute_is_a_pace_not_a_stop() -> None:
     st, clock = BotState(), Clock()
     br = CircuitBreaker(st, RiskConfig(max_orders_per_minute=3), clock=clock)
     for _ in range(3):
-        assert br.check(D(1)) is None
+        assert not br.minute_limit_reached()
         br.record(D(1))
-    assert "órdenes por minuto" in (br.check(D(1)) or "")
+    assert br.minute_limit_reached()
     clock.t += 61
-    assert br.check(D(1)) is None
+    assert not br.minute_limit_reached()
 
 
 def test_circuit_breaker_notional_per_hour_survives_restart(tmp_path: Path) -> None:
@@ -170,10 +171,10 @@ def test_circuit_breaker_notional_per_hour_survives_restart(tmp_path: Path) -> N
     store = StateStore(tmp_path / "s.json")
     store.save(st)
     br2 = CircuitBreaker(store.load(), cfg, clock=clock)  # tras reinicio
-    assert br2.check(D(100)) is None
-    assert "nocional" in (br2.check(D("100.01")) or "")
+    assert br2.check_notional(D(100)) is None
+    assert "nocional" in (br2.check_notional(D("100.01")) or "")
     clock.t += 3600
-    assert br2.check(D(1000)) is None  # la ventana de una hora caduca
+    assert br2.check_notional(D(1000)) is None  # la ventana de una hora caduca
 
 
 def test_breaker_uses_hard_limits_even_if_config_was_bypassed() -> None:
@@ -181,9 +182,22 @@ def test_breaker_uses_hard_limits_even_if_config_was_bypassed() -> None:
         max_orders_per_minute=999, max_notional_per_hour_usd=D(10**9),
         max_consecutive_errors=5, max_drawdown_pct=D(15),
     )
-    st = BotState()
-    br = CircuitBreaker(st, cfg, clock=Clock())
-    assert br.check(limits.HARD_MAX_NOTIONAL_PER_HOUR_USD + 1) is not None
+    st, clock = BotState(), Clock()
+    br = CircuitBreaker(st, cfg, clock=clock)
+    assert br.check_notional(limits.HARD_MAX_NOTIONAL_PER_HOUR_USD + 1) is not None
+    for _ in range(limits.HARD_MAX_ORDERS_PER_MINUTE):
+        br.record(D(1))
+    assert br.minute_limit_reached()
+
+
+def test_paced_cycles_limit_respects_hard_cap(tmp_path: Path) -> None:
+    from copybot.config import ConfigError, load_config
+    from tests.conftest import LEADER
+
+    p = tmp_path / "c.toml"
+    p.write_text(f'leader_address = "{LEADER}"\n[risk]\nmax_consecutive_paced_cycles = 6\n')
+    with pytest.raises(ConfigError, match="tope absoluto"):
+        load_config(p)
 
 
 def test_startup_profile_activates_once_and_only_explicit_release(tmp_path: Path) -> None:

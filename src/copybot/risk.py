@@ -51,6 +51,8 @@ def reset_halt(state: BotState) -> None:
     state.halt_reason = ""
     state.halted_at = None
     state.consecutive_errors = 0
+    state.paced_streak = 0
+    state.kill_switch_closed = False
     state.sanity = SanityState()
 
 
@@ -95,13 +97,18 @@ class CircuitBreaker:
     def _prune(self, now: float) -> None:
         self._state.breaker_log = [(t, n) for t, n in self._state.breaker_log if now - t < 3600]
 
-    def check(self, notional_usd: Decimal) -> str | None:
-        """Motivo para NO enviar una orden de este nocional, o None si cabe."""
+    def minute_limit_reached(self) -> bool:
+        """El límite de órdenes/min no se supera nunca: las órdenes que no caben
+        se aplazan al ciclo siguiente (el planificador ya las priorizó)."""
         now = self._clock()
         self._prune(now)
         last_minute = sum(1 for t, _ in self._state.breaker_log if now - t < 60)
-        if last_minute + 1 > self._max_orders:
-            return f"circuit breaker: más de {self._max_orders} órdenes por minuto"
+        return last_minute >= self._max_orders
+
+    def check_notional(self, notional_usd: Decimal) -> str | None:
+        """Motivo para DETENER el bot si esta orden supera el nocional por hora."""
+        now = self._clock()
+        self._prune(now)
         last_hour = sum((n for _, n in self._state.breaker_log), Decimal(0))
         if last_hour + notional_usd > self._max_notional:
             return (

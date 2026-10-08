@@ -17,6 +17,7 @@ from copybot.exchange.paper import PaperAccount, PaperExchange
 from copybot.executor import (
     CircuitBreakerTripped,
     ExecutionContext,
+    ExecutionReport,
     Executor,
     OrderUncertain,
     limit_price,
@@ -83,10 +84,15 @@ def act(kind: ActionKind, side: Side, size: str, reduce_only: bool = False,
     return Action(kind, SOL, side, D(size), reduce_only, D(ref))
 
 
-async def run(execu: Executor, market: FakeMarket, actions: list[Action],
-              positions: dict[str, D] | None = None, **kw: Any) -> list[OrderResult]:
+async def run_report(execu: Executor, market: FakeMarket, actions: list[Action],
+                     positions: dict[str, D] | None = None, **kw: Any) -> ExecutionReport:
     return await execu.execute(actions, markets=market.specs, positions=positions or {},
                                ctx=CTX, **kw)
+
+
+async def run(execu: Executor, market: FakeMarket, actions: list[Action],
+              positions: dict[str, D] | None = None, **kw: Any) -> list[OrderResult]:
+    return (await run_report(execu, market, actions, positions, **kw)).results
 
 
 def trades(tmp_path: Path) -> list[dict[str, str]]:
@@ -190,12 +196,20 @@ async def test_flip_open_waits_for_complete_close(tmp_path: Path) -> None:
     assert await ex.positions() == {SOL: D(2)}  # nunca abre el corto con el largo vivo
 
 
-async def test_circuit_breaker_stops_before_sending(tmp_path: Path) -> None:
+async def test_order_limit_defers_instead_of_exceeding(tmp_path: Path) -> None:
     execu, ex, _, _, market, _ = setup(tmp_path, max_orders_per_minute=2)
-    acts = [act(ActionKind.OPEN, Side.BUY, "0.1") for _ in range(3)]
+    acts = [act(ActionKind.OPEN, Side.BUY, "0.2"), act(ActionKind.OPEN, Side.BUY, "0.2"),
+            act(ActionKind.OPEN, Side.BUY, "0.2")]
+    report = await run_report(execu, market, acts)
+    assert len(ex.sent) == 2 and report.deferred == 1  # nunca más de 2 en el minuto
+
+
+async def test_notional_per_hour_still_stops(tmp_path: Path) -> None:
+    execu, ex, _, _, market, _ = setup(tmp_path, max_notional_per_hour_usd=D(150))
     with pytest.raises(CircuitBreakerTripped):
-        await run(execu, market, acts)
-    assert len(ex.sent) == 2
+        await run(execu, market, [act(ActionKind.OPEN, Side.BUY, "1"),
+                                  act(ActionKind.INCREASE, Side.BUY, "1")])
+    assert len(ex.sent) == 1
 
 
 async def test_emergency_close_bypasses_breaker_but_only_reduce_only(tmp_path: Path) -> None:

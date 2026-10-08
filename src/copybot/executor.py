@@ -10,7 +10,12 @@ Garantías:
   pendiente y el ciclo se aborta: nunca se reenvía a ciegas. El siguiente
   ciclo reconcilia las pendientes antes de planificar.
 - Un cambio de dirección solo abre la nueva posición si el cierre se completó.
-- Circuit breaker y topes absolutos comprobados antes de cada envío.
+- Circuit breaker: el límite de órdenes por minuto nunca se supera; las
+  acciones que no caben se aplazan al ciclo siguiente (vienen priorizadas
+  del planificador). Superar el nocional por hora detiene el bot.
+- Cierres de emergencia (drawdown, kill switch): solo reduceOnly y sin
+  límite del circuit breaker.
+- Tope absoluto por activo comprobado antes de cada envío.
 - Las ejecuciones parciales no se reintentan aquí: el ciclo siguiente parte de
   la posición real y planifica el resto.
 """
@@ -50,6 +55,12 @@ class CircuitBreakerTripped(Exception):
 
 class OrderUncertain(Exception):
     """No se sabe si una orden llegó al exchange: no operar hasta reconciliar."""
+
+
+@dataclass(frozen=True)
+class ExecutionReport:
+    results: list[OrderResult]
+    deferred: int = 0  # acciones aplazadas por el límite de órdenes/min
 
 
 @dataclass(frozen=True)
@@ -118,14 +129,20 @@ class Executor:
         positions: Mapping[str, Decimal],
         ctx: ExecutionContext,
         emergency: bool = False,
-    ) -> list[OrderResult]:
-        """emergency=True (cierre total por drawdown): solo admite órdenes reduceOnly
-        y no las frena el circuit breaker, que existe para impedir AUMENTAR riesgo."""
+    ) -> ExecutionReport:
+        """emergency=True (cierre por drawdown o kill switch): solo admite órdenes
+        reduceOnly y no las frena el circuit breaker, que existe para impedir
+        AUMENTAR riesgo."""
         pos = dict(positions)
         results: list[OrderResult] = []
         incomplete_flip: set[str] = set()
 
-        for a in actions:
+        for i, a in enumerate(actions):
+            if not emergency and self._breaker.minute_limit_reached():
+                deferred = len(actions) - i
+                log.warning("límite de órdenes por minuto alcanzado: %d acciones aplazadas",
+                            deferred)
+                return ExecutionReport(results, deferred)
             if a.kind is ActionKind.FLIP_OPEN and a.symbol in incomplete_flip:
                 log.warning("%s: el cierre del cambio de dirección no se completó; "
                             "la apertura queda para el ciclo siguiente", a.symbol)
@@ -143,7 +160,7 @@ class Executor:
                 if not a.reduce_only:
                     raise limits.HardLimitViolation("cierre de emergencia con orden no reduceOnly")
             else:
-                reason = self._breaker.check(a.notional_usd)
+                reason = self._breaker.check_notional(a.notional_usd)
                 if reason:
                     raise CircuitBreakerTripped(reason)
 
@@ -180,7 +197,7 @@ class Executor:
                 log.warning("%s: orden rechazada (%s)", a.symbol, result.reason)
             if a.kind is ActionKind.FLIP_CLOSE and result.status is not OrderStatus.FILLED:
                 incomplete_flip.add(a.symbol)
-        return results
+        return ExecutionReport(results)
 
     async def _send(self, req: OrderRequest) -> OrderResult:
         try:

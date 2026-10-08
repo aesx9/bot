@@ -23,6 +23,11 @@ HARD_MAX_SLIPPAGE_PCT: Final = Decimal("0.5")
 HARD_MAX_ORDERS_PER_MINUTE: Final = 10
 HARD_MAX_NOTIONAL_PER_HOUR_USD: Final = Decimal("2000")
 HARD_MAX_CONSECUTIVE_ERRORS: Final = 5
+# Ciclos seguidos en los que el límite de órdenes/min obliga a aplazar órdenes
+# (fuera de la sincronización inicial) antes de detener el bot
+HARD_MAX_PACED_CYCLES: Final = 5
+# La sincronización inicial puede aplazar órdenes como mucho en estos ciclos
+INITIAL_SYNC_MAX_CYCLES: Final = 10
 
 # Sanity del líder: ciclos seguidos con un control fallido antes de detenerse
 HARD_MAX_SANITY_FAILURES: Final = 5

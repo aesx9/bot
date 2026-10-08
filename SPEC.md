@@ -258,3 +258,33 @@ pública real:
   2026-06-22 y la tabla oficial no es accesible desde aquí. Fuentes de
   terceros dan 0,05 % para el nivel inicial: valor por defecto
   parametrizado, a confirmar en la cuenta real.
+
+## Decisiones antes de la fase 5
+- Demo, comisión taker y haircut EUR: sin dato del usuario todavía. Se
+  mantiene "sin soporte demo" y los valores por defecto del modo paper
+  (0,05 % y 0 %), editables en `config.toml`.
+- Circuit breaker (opción B):
+  - El límite de órdenes por minuto nunca se supera. Lo que no cabe se aplaza
+    al ciclo siguiente, en este orden de prioridad: cierres (totales y de
+    cambio de dirección), reducciones, y aperturas o aumentos. Dentro de cada
+    grupo, de mayor a menor nocional.
+  - Superar el nocional por hora sigue deteniendo el bot.
+  - Fuera de la sincronización inicial, si hay órdenes aplazadas en más de
+    N = 3 ciclos seguidos (`risk.max_consecutive_paced_cycles`, tope absoluto
+    5), el bot se detiene y alerta.
+  - La sincronización inicial va desde el arranque del proceso hasta el
+    primer ciclo sin aplazamientos. Si dura más de 10 ciclos con
+    aplazamientos, el bot se detiene.
+- Cierres de emergencia (drawdown y kill switch): solo órdenes reduceOnly,
+  sin límite del circuit breaker, en hasta 5 rondas hasta quedar sin
+  posiciones gestionadas. Si algo queda abierto, alerta crítica pidiendo el
+  cierre manual.
+  - Antes de esta fase el kill switch solo detenía el bot, sin cerrar nada.
+    Ahora cierra lo gestionado (`risk.close_all_on_kill_switch = true`,
+    desactivable). Lo hace una sola vez por parada, aunque el bot ya estuviera
+    detenido.
+- `rank_leaders`: se descartan los líderes con más de 8 posiciones
+  simultáneas (propuesta). Con unos 550 USD y apalancamiento 2x hay
+  1.100 USD de nocional; entre 8 posiciones salen unos 137 USD por posición,
+  que coincide con el tope por activo del 25 %, y todas superan con holgura
+  el mínimo de 10 USD.

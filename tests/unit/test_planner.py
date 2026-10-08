@@ -174,3 +174,25 @@ def test_close_and_flip_close_use_exact_position_size() -> None:
     assert [(x.kind, x.size) for x in acts] == [
         (ActionKind.FLIP_CLOSE, D("0.123456")), (ActionKind.FLIP_OPEN, D("1.2")),
     ]
+
+
+def test_priority_closes_then_reductions_then_opens_by_notional() -> None:
+    # A=100 USD, B=10 USD, C=1 USD por unidad
+    t = {"A": D(1), "B": D(30), "C": D(-5)}
+    c = {"A": D(3), "B": D(-2), "C": D(50), "D": D(1)}
+    prices = {**P, "D": D(1000)}
+    acts = plan(targets=t, current=c, managed=set(t) | set(c), prices=prices,
+                markets=specs(prices), cfg=NOFILTER)
+    assert [(a.kind, a.symbol) for a in acts] == [
+        (ActionKind.CLOSE, "D"),  # 1000 USD
+        (ActionKind.FLIP_CLOSE, "C"),  # 50 USD
+        (ActionKind.FLIP_CLOSE, "B"),  # 20 USD
+        (ActionKind.REDUCE, "A"),  # 200 USD
+        (ActionKind.FLIP_OPEN, "B"),  # 300 USD
+        (ActionKind.FLIP_OPEN, "C"),  # 5 USD
+    ]
+
+
+def test_opens_are_ordered_by_notional_desc() -> None:
+    acts = run({"A": D(1), "B": D(50), "C": D(20)}, {}, NOFILTER)
+    assert [a.symbol for a in acts] == ["B", "A", "C"]  # 500, 100, 20 USD

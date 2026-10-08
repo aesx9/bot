@@ -15,7 +15,7 @@ from copybot import limits
 from copybot.alerts import Level, LogAlerter
 from copybot.config import Config
 from copybot.engine import Engine, Outcome
-from copybot.exchange.kraken_public import FundingRate, KrakenDataError
+from copybot.exchange.kraken_public import FundingRate, KrakenDataError, OrderBook
 from copybot.exchange.paper import PaperAccount, PaperExchange, PaperPosition
 from copybot.records import CsvRecorder
 from copybot.risk import reset_halt
@@ -26,6 +26,10 @@ from tests.conftest import LEADER
 from tests.fakes import NOW, FakeLeader, FakeMarket
 
 BTC, ETH, SOL, DOGE = "PF_XBTUSD", "PF_ETHUSD", "PF_SOLUSD", "PF_DOGEUSD"
+
+
+async def _no_sleep(_: float) -> None:
+    return None
 
 
 class World:
@@ -58,6 +62,7 @@ class World:
             alerter=self.alerts, kill_dirs=[self.tmp], startup_profile=startup_profile,
             now=lambda: self.clock["now"],
             breaker_clock=lambda: self.clock["now"].timestamp(),
+            emergency_pause_seconds=0, sleep=_no_sleep,
         )
 
     def restart(self, **kw: Any) -> None:
@@ -221,12 +226,95 @@ async def test_one_success_resets_error_count(world: World) -> None:
     assert world.state.consecutive_errors == 0
 
 
-async def test_circuit_breaker_halts_the_bot(tmp_path: Path) -> None:
+async def test_initial_sync_is_paced_not_halted(tmp_path: Path) -> None:
     w = World(tmp_path, FakeLeader("100000", BTC="1", ETH="10", SOL="200", DOGE="100000"),
               risk={"max_orders_per_minute": 3})
-    assert await w.cycle() is Outcome.HALTED
-    assert "circuit breaker" in w.state.halt_reason
+    report = await w.engine.cycle()
+    w.clock["now"] += timedelta(seconds=90)
+    assert report.outcome is Outcome.OK and "1 aplazadas" in report.detail
     assert len(await w.positions()) == 3
+    # Prioridad: las aperturas de mayor nocional entraron primero
+    assert await w.cycle() is Outcome.OK
+    assert len(await w.positions()) == 4 and w.state.paced_streak == 0
+
+
+async def test_pacing_outside_initial_sync_halts_after_n_cycles(tmp_path: Path) -> None:
+    # Ratio fijo pequeño: ningún tope recorta, así cada cambio del líder genera órdenes
+    w = World(tmp_path, FakeLeader("100000", BTC="1"),
+              risk={"max_orders_per_minute": 2},
+              sizing={"mode": "fixed", "fixed_ratio": "0.0002"})
+    assert await w.cycle() is Outcome.OK  # sincronización inicial completa, sin aplazar
+    outcomes = []
+    for k in range(2, 6):  # el líder aumenta tres activos por ciclo: solo caben dos órdenes
+        w.leader.positions = {"BTC": D(k), "ETH": D(30 * k), "SOL": D(600 * k)}
+        outcomes.append(await w.cycle())
+    assert outcomes == [Outcome.OK, Outcome.OK, Outcome.OK, Outcome.HALTED]
+    assert "seguidos" in w.state.halt_reason
+    assert sum(1 for lvl, _ in w.alerts.sent if lvl is Level.WARNING) >= 3
+
+
+async def test_kill_switch_closes_managed_and_spares_manual(world: World) -> None:
+    world.account.positions[DOGE] = PaperPosition(D(1000), D("0.08"))
+    await world.cycle()
+    (world.tmp / "STOP").touch()
+    assert await world.cycle() is Outcome.HALTED
+    assert await world.positions() == {DOGE: D(1000)}
+    assert world.state.kill_switch_closed and "cerradas" in world.state.halt_reason
+    assert all(r["reduce_only"] == "True" for r in world.rows("trades.csv")[2:])
+
+
+async def test_kill_switch_close_can_be_disabled(tmp_path: Path) -> None:
+    w = World(tmp_path, FakeLeader("100000", BTC="1"), risk={"close_all_on_kill_switch": False})
+    await w.cycle()
+    (w.tmp / "STOP").touch()
+    assert await w.cycle() is Outcome.HALTED
+    assert BTC in await w.positions()
+
+
+async def test_kill_switch_on_already_halted_bot_still_closes(world: World) -> None:
+    await world.cycle()
+    world.leader.fail = LeaderDataError("caída")
+    for _ in range(5):
+        await world.cycle()
+    assert world.state.halted and await world.positions()
+    (world.tmp / "STOP").touch()
+    await world.cycle()
+    assert await world.positions() == {}
+
+
+async def test_emergency_close_retries_until_flat_ignoring_order_limit(tmp_path: Path) -> None:
+    w = World(tmp_path, FakeLeader("100000", BTC="1"), risk={"max_orders_per_minute": 1})
+    await w.cycle()
+    size = (await w.positions())[BTC]
+    mark = w.market.ticker_map[BTC].mark_price
+    # Libro casi vacío: cada ronda solo cierra 0.0005 BTC
+    w.market.books[BTC] = OrderBook(BTC, bids=((mark, D("0.0005")),),
+                                    asks=((mark + 1, D(1)),))
+    (w.tmp / "STOP").touch()
+    assert await w.cycle() is Outcome.HALTED
+    assert await w.positions() == {}
+    closes = [r for r in w.rows("trades.csv") if r["accion"] == "close"]
+    assert len(closes) >= 2 and sum(D(r["tamano"]) for r in closes) == size
+
+
+async def test_emergency_close_failure_is_reported(tmp_path: Path) -> None:
+    w = World(tmp_path, FakeLeader("100000", BTC="1"))
+    await w.cycle()
+    w.market.books[BTC] = OrderBook(BTC, bids=(), asks=())
+    (w.tmp / "STOP").touch()
+    assert await w.cycle() is Outcome.HALTED
+    assert "CIÉRRALAS A MANO" in w.state.halt_reason
+    assert w.state.managed_symbols == {BTC}
+
+
+async def test_drawdown_close_is_not_limited_by_order_rate(world: World) -> None:
+    await world.cycle()
+    now = world.clock["now"].timestamp() + 90
+    world.state.breaker_log += [(now - 1, D(1))] * 20  # límite por minuto agotado
+    for sym in (BTC, ETH):
+        world.market.set_mark(sym, world.market.ticker_map[sym].mark_price * D("0.4"))
+    assert await world.cycle() is Outcome.HALTED
+    assert await world.positions() == {}
 
 
 async def test_startup_profile_caps_live_exposure(world: World) -> None:

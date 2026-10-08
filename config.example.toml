@@ -36,6 +36,8 @@ close_all_on_drawdown = true
 max_orders_per_minute = 10           # tope absoluto: 10
 max_notional_per_hour_usd = 2000     # tope absoluto: 2000
 max_consecutive_errors = 5           # tope absoluto: 5
+max_consecutive_paced_cycles = 3     # ciclos seguidos aplazando órdenes; tope: 5
+close_all_on_kill_switch = true      # fichero STOP: cerrar lo gestionado y parar
 catastrophe_stop_enabled = true      # solo live
 catastrophe_stop_pct = 20
 

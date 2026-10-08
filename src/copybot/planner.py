@@ -13,8 +13,10 @@ Reglas:
 - Aperturas/aumentos/reducciones parciales se descartan si, ya redondeadas,
   quedan bajo el mínimo del mercado o bajo min_order_usd; aumentos y
   reducciones además por rebalance_threshold_pct.
-- Orden de salida: primero lo que libera margen (cierres y reducciones),
-  después lo que lo consume.
+- Orden de salida (importa porque el circuit breaker limita las órdenes por
+  minuto y las que no caben se aplazan): primero cierres (totales y de cambio
+  de dirección), después reducciones y por último aperturas y aumentos; dentro
+  de cada grupo, de mayor a menor nocional.
 """
 
 from __future__ import annotations
@@ -111,7 +113,12 @@ def plan(
         else:
             reducing.append(act(ActionKind.REDUCE, -sign * size, True, "reducir"))
 
-    return reducing + adding
+    def by_notional(acts: list[Action]) -> list[Action]:
+        return sorted(acts, key=lambda a: (-a.notional_usd, a.symbol))
+
+    closes = [a for a in reducing if a.kind is not ActionKind.REDUCE]
+    reductions = [a for a in reducing if a.kind is ActionKind.REDUCE]
+    return by_notional(closes) + by_notional(reductions) + by_notional(adding)
 
 
 def apply_actions(current: Mapping[str, Decimal], actions: list[Action]) -> dict[str, Decimal]:
