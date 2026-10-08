@@ -51,7 +51,7 @@
 | M8 | Media | Sin vigilancia externa, watchdog ni manejo de SIGTERM | (lectura) | resuelto (`2c2087d`) |
 | M9 | Media | El kill switch puede tardar hasta 1 h | (lectura) | resuelto (`a248c21`) |
 | M10 | Media | Posiciones manuales en mercados del líder se adoptan | E | resuelto (`e8e0274`) |
-| M11 | Media | Sin coherencia de precios HL↔Kraken; `max_position_size` sin usar | (lectura) | pendiente |
+| M11 | Media | Sin coherencia de precios HL↔Kraken; `max_position_size` sin usar | (lectura) | resuelto (`f138907`) |
 | M12 | Media | Los topes se aplican al objetivo, no a la exposición real | (lectura) | pendiente |
 | M13 | Media | Tras un HALT las posiciones quedan con stops laxos | (lectura) | pendiente |
 | M14 | Media | Lagunas de tests (mutaciones supervivientes) | mutación | pendiente |
@@ -226,11 +226,12 @@ cualquier posición abierta en Kraken Futures.
 - **Regresión:** tests/integration/test_main.py::test_first_live_start_is_refused_with_any_open_position, ::test_restarts_with_the_bots_own_positions_are_not_blocked; test_check.py::test_open_positions_are_fatal_before_the_first_live_start, ::test_open_positions_after_the_bot_started_are_only_a_warning, ::test_no_open_positions_is_clean
 
 ### M11 — Coherencia de precios HL↔Kraken y `max_position_size`
-**Gravedad:** media · **Estado:** pendiente
+**Gravedad:** media · **Estado:** resuelto en `f138907`
 
 No se compara el mid de Hyperliquid con el mark de Kraken y `max_position_size`
 se lee pero no se usa. Corrección: descartar el activo si el precio diverge y
 respetar el máximo del mercado.
+- **Regresión:** tests/integration/test_engine.py::test_asset_with_incoherent_price_is_not_traded_and_warns_once, ::test_incoherent_price_leaves_an_existing_position_untouched, ::test_size_factor_makes_a_scaled_asset_coherent; test_planner.py::test_target_is_capped_at_the_market_max_position_size
 
 ### M12 — Topes sobre exposición real
 **Gravedad:** media · **Estado:** pendiente
