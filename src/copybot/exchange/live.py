@@ -292,9 +292,11 @@ class LiveExchange:
         self._staged = staged
         self.commit_ledger()
 
-    async def collect_funding(self, now: datetime) -> list[FundingEvent]:
+    async def collect_funding(self, now: datetime, *, account_log: bool = True
+                              ) -> list[FundingEvent]:
         """Prepara lo nuevo del libro: fills (en cada llamada, con paginación) y, cada
-        FUNDING_POLL_SECONDS, funding y comisiones del log de cuenta.
+        FUNDING_POLL_SECONDS, funding y comisiones del log de cuenta (account_log=False:
+        solo fills, para el paso previo a planificar).
 
         NO avanza cursores ni ids vistos: el motor escribe primero los CSV (fills y
         comisiones con drain_ledger(), eventos de funding con el valor devuelto) y después
@@ -305,8 +307,8 @@ class LiveExchange:
         staged = _Staged()
         await self._stage_fills(staged, baseline=False)
         events: list[FundingEvent] = []
-        if (self._last_log_poll is None
-                or (now - self._last_log_poll).total_seconds() >= FUNDING_POLL_SECONDS):
+        if account_log and (self._last_log_poll is None
+                            or (now - self._last_log_poll).total_seconds() >= FUNDING_POLL_SECONDS):
             events = await self._stage_account_log(staged)
             staged.polled_log_at = now
         self._staged = staged

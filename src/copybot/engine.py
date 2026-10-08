@@ -87,16 +87,19 @@ async def update_ledger(exchange: Exchange, recorder: CsvRecorder, now: datetime
                         positions: dict[str, Decimal] | None = None,
                         positions_at: datetime | None = None,
                         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
-                        ) -> LedgerUpdate:
+                        fills_only: bool = False) -> LedgerUpdate:
     """Libro en dos fases: prepara lo nuevo (funding, fills, comisiones), lo escribe en los
     CSV y SOLO entonces confirma cursores e ids vistos; en live añade además la foto de las
     posiciones reales (positions.csv, que solo se escribe si cambian o cada hora).
 
     Solo hace lecturas en el exchange. Si escribir falla, la siguiente llamada vuelve a
     traerlo (los CSV no duplican por id). Las alertas se devuelven para que las envíe quien
-    llama."""
+    llama.
+
+    fills_only=True (live, antes de planificar): solo /fills, sin el log de cuenta ni la foto,
+    de modo que un fallo del log de cuenta no impida operar."""
     update = LedgerUpdate()
-    for event in await exchange.collect_funding(now):
+    for event in await exchange.collect_funding(now, account_log=not fills_only):
         recorder.funding(event, exchange.mode)
         update.funding += 1
     drain_ledger = getattr(exchange, "drain_ledger", None)
@@ -113,12 +116,23 @@ async def update_ledger(exchange: Exchange, recorder: CsvRecorder, now: datetime
     drain_alerts = getattr(exchange, "drain_alerts", None)
     if drain_alerts is not None:
         update.alerts = list(drain_alerts())
-    if exchange.mode == "live":  # foto de las posiciones reales para conciliar
+    if exchange.mode == "live" and not fills_only:  # foto de las posiciones reales
         if positions is None:
             positions = await exchange.positions()
             positions_at = clock()  # el instante de la lectura, no el de empezar
         recorder.positions_snapshot(positions_at or now, exchange.mode, positions)
     return update
+
+
+# Fills que significan que la protección del exchange actuó: el bot no debe reabrir
+PROTECTIVE_ORIGINS = ("stop_catastrofe", "liquidación")
+
+
+def protective_fills_note(fills: Sequence[dict[str, Any]]) -> str:
+    """'' si ningún fill es de un stop de catástrofe o una liquidación; si no, el detalle."""
+    hits = [f for f in fills if f.get("origin") in PROTECTIVE_ORIGINS]
+    return "; ".join(f"{f['origin']} en {f['symbol']} ({f['side']} {f['size']} a {f['price']}, "
+                     f"fill {f['fill_id']})" for f in hits)
 
 
 class LoopTaskDied(RuntimeError):
@@ -348,6 +362,10 @@ class Engine:
             update = await update_ledger(self._ex, self._rec, self._now(), clock=self._now)
             for text in update.alerts:
                 await self._alert.alert(Level.CRITICAL, text)
+            note = protective_fills_note(update.fills)
+            if note:
+                await self._alert.alert(Level.CRITICAL, f"con el bot detenido actuó la "
+                                        f"protección del exchange: {note}")
             self._save()
         except Exception as exc:
             log.exception("no se pudo actualizar el libro fiscal con el bot detenido")
@@ -385,6 +403,15 @@ class Engine:
         prepare_ledger = getattr(self._ex, "prepare_ledger", None)
         if prepare_ledger is not None:  # live: línea base del libro ANTES de la primera orden
             await prepare_ledger(self._now())
+            # Y el libro al día ANTES de planificar: si desde el último ciclo saltó un stop de
+            # catástrofe o hubo una liquidación, el bot se detiene en vez de reabrir
+            update = await update_ledger(self._ex, self._rec, self._now(), clock=self._now,
+                                         fills_only=True)
+            for text in update.alerts:
+                await self._alert.alert(Level.CRITICAL, text)
+            halted = await self._halt_on_protective_fills(update)
+            if halted is not None:
+                return halted
 
         snap = await self._leader.leader_snapshot(cfg.leader_address)
         sanity = check_leader(snap, state.sanity, cfg.sanity,
@@ -476,7 +503,10 @@ class Engine:
         # Los stops van PRIMERO: un fallo posterior (funding, libro, capital) no puede dejar
         # una posición recién abierta sin protección
         await self._sync_protective_stops(after, markets)
-        await self._after_trading(snap.equity_usd, after, positions_at)
+        update = await self._after_trading(snap.equity_usd, after, positions_at)
+        halted = await self._halt_on_protective_fills(update)
+        if halted is not None:
+            return halted
 
         paced = await self._track_pacing(execution.deferred)
         if paced is not None:
@@ -495,6 +525,14 @@ class Engine:
         if execution.skipped:
             detail += f", {execution.skipped} omitidas por superar la exposición permitida"
         return CycleReport(Outcome.OK, detail, orders=len(results))
+
+    async def _halt_on_protective_fills(self, update: LedgerUpdate) -> CycleReport | None:
+        note = protective_fills_note(update.fills)
+        if not note:
+            return None
+        return await self._halt(
+            f"actuó la protección del exchange: {note}. El bot se detiene para no reabrir la "
+            "posición; revisa la cuenta antes de --reset-halt")
 
     async def _protect_after_abort(self, markets: dict[str, MarketSpec]) -> None:
         """Mejor esfuerzo: guardar lo gestionado y colocar los stops de catástrofe."""

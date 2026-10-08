@@ -138,3 +138,50 @@ def test_sync_ledger_is_only_for_live(tmp_path: Path, capsys: Any) -> None:
     from tests.integration.test_main import write_config
 
     assert main(["--config", str(write_config(tmp_path)), "--sync-ledger"]) == EXIT_USAGE
+
+
+# --- N5: un stop de catástrofe o una liquidación detienen el bot ---
+
+
+def _protective_fill(env: Env, kind: str) -> None:  # noqa: F811
+    """Kraken ejecuta el stop (o liquida): la posición desaparece y aparece el fill."""
+    [stop] = env.kraken.open_orders
+    env.kraken.open_orders = []
+    env.kraken.positions = []
+    env.kraken.fills.append({
+        "cliOrdId": stop["cliOrdId"] if kind == "stop" else None,
+        "fillTime": "2026-10-08T12:00:30.000Z",
+        "fillType": "taker" if kind == "stop" else "liquidation", "fill_id": f"{kind}-fill",
+        "order_id": "o", "price": "85", "side": "sell", "size": stop["unfilledSize"],
+        "symbol": SOL})
+
+
+@pytest.mark.parametrize("kind", ["stop", "liquidation"])
+async def test_a_catastrophe_stop_or_liquidation_halts_instead_of_reopening(
+        env: Env, tmp_path: Path, kind: str) -> None:  # noqa: F811
+    """N5 (PoC P5): tras saltar el stop, el ciclo siguiente reabría la posición del líder; con
+    el stop al 5-7,5 % la volatilidad normal lo repetía hasta cortar el drawdown."""
+    clock = {"now": NOW}
+    engine = live_engine(env, tmp_path, clock)
+    assert (await engine.cycle()).outcome is Outcome.OK
+    _protective_fill(env, kind)
+    clock["now"] = NOW + timedelta(minutes=1)
+    sends = len(env.kraken.sends("ioc"))
+    report = await engine.cycle()
+    assert report.outcome is Outcome.HALTED
+    assert len(env.kraken.sends("ioc")) == sends  # no reabre
+    origin = "stop_catastrofe" if kind == "stop" else "liquidación"
+    assert origin in env.state.halt_reason
+    alerter = engine._alert
+    assert isinstance(alerter, LogAlerter)
+    assert any(level.value == "CRÍTICO" and origin in text for level, text in alerter.sent)
+    assert f"{kind}-fill" in {r["fill_id"] for r in rows(tmp_path / "kraken_fills.csv")}
+
+
+async def test_bot_and_manual_fills_do_not_halt(env: Env, tmp_path: Path) -> None:  # noqa: F811
+    engine = live_engine(env, tmp_path)
+    assert (await engine.cycle()).outcome is Outcome.OK
+    env.kraken.fills.append({"cliOrdId": None, "fillTime": "2026-10-08T12:00:30.000Z",
+                             "fillType": "taker", "fill_id": "manual", "order_id": "o",
+                             "price": "100", "side": "buy", "size": "1", "symbol": "PF_XBTUSD"})
+    assert (await engine.cycle()).outcome is Outcome.OK

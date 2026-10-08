@@ -357,6 +357,9 @@ pública real:
   activo). El funding que no es USD no se escribe en `funding.csv` y se avisa;
   las comisiones se guardan con su moneda real (EUR se convierte en el export,
   otras se avisan) y se alerta de una comisión negativa o de signo invertido.
+- (Segunda auditoría, N5) Un fill de origen `stop_catastrofe` o `liquidación` detiene el
+  bot con alerta crítica: el libro (`/fills`) se pone al día ANTES de planificar, de modo
+  que no se reabre la posición que acaba de cerrar la protección del exchange.
 - `export_fiscal`: el resultado se pasa de USD a EUR con el tipo de
   referencia diario del BCE (EUR/USD) en la fecha de cada liquidación,
   indicando la fuente en el fichero. Funding pagado y cobrado en columnas

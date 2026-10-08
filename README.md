@@ -375,6 +375,7 @@ antes de abandonar el bot y antes del export fiscal.
 | 3 ciclos seguidos con datos del líder sospechosos | Se detiene sin operar | ¿Depósito o retiro del líder? |
 | 5 ciclos seguidos con error | Se detiene | Logs: red, API o claves |
 | Tope absoluto superado | Se detiene | Revisar la config |
+| Saltó un stop de catástrofe o hubo una liquidación (fill en el libro) | Se detiene sin reabrir y avisa con el fill | Revisar la cuenta y la volatilidad antes de reanudar |
 
 Las paradas **persisten tras reiniciar**. Para reanudar:
 `sudo copybot-cli --reset-halt`, que pide escribir `REANUDAR` y reinicia la

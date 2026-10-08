@@ -240,7 +240,9 @@ class PaperExchange:
         self.account.orders[req.cli_ord_id] = result
         return result
 
-    async def collect_funding(self, now: datetime) -> list[FundingEvent]:
+    async def collect_funding(self, now: datetime, *, account_log: bool = True
+                              ) -> list[FundingEvent]:
+        # account_log solo tiene sentido en live (log de cuenta de Kraken)
         if not self._cfg.simulate_funding:
             return []
         events: list[FundingEvent] = []
