@@ -39,7 +39,7 @@
 | A1 | Alta | Una excepción no prevista mata el bucle y el bot sigue "vivo" sin operar | B, C | resuelto (`fbbc0f8`) |
 | A2 | Alta | Posiciones huérfanas si el ciclo se aborta a mitad de ejecución | J, J2 | resuelto (`9770f80`) |
 | A3 | Alta | Estado compartido entre paper y live | E | pendiente |
-| A4 | Alta | Los fills del primer ciclo live no entran en el libro fiscal | A | pendiente |
+| A4 | Alta | Los fills del primer ciclo live no entran en el libro fiscal | A | resuelto (`d59f8ef`) |
 | A5 | Alta | Cierre de emergencia frágil | I, K | pendiente |
 | M1 | Media | Tamaños y precios en notación científica en `sendorder` | formato | pendiente |
 | M2 | Media | Stops de catástrofe: tarde, reemplazo no atómico, sobreviven al cierre | G, G2, L | pendiente |
@@ -115,7 +115,7 @@ la pérdida; las altas debilitan justo las redes de seguridad.
   modo guardado en el estado y negativa a arrancar si no coincide.
 
 ### A4 — Los fills del primer ciclo live no entran en el libro fiscal
-**Gravedad:** alta · **Estado:** pendiente
+**Gravedad:** alta · **Estado:** resuelto en `d59f8ef`
 
 - **Dónde:** `live.py` (`_poll_fills`, `collect_funding`), `engine.py` (orden de
   `execute` y `_after_trading`).
@@ -124,6 +124,7 @@ la pérdida; las altas debilitan justo las redes de seguridad.
   órdenes y sus comisiones. El export no declara la posición cerrada y avisa de
   un corto abierto inexistente.
 - **Corrección:** fijar la línea base del libro antes del primer envío.
+- **Regresión:** tests/integration/test_live_exchange.py::test_first_cycle_fills_reach_the_fiscal_ledger y ::test_prepare_ledger_is_idempotent_and_runs_once
 
 ### A5 — Cierre de emergencia frágil
 **Gravedad:** alta · **Estado:** pendiente
