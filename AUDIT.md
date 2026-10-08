@@ -388,7 +388,7 @@ supervisada con dinero real.
 | N2 | Media | Con el bot detenido el libro fiscal no recoge nada (cierres de emergencia, stops) | P3 | resuelto (`d40b652`) |
 | N3 | Media | Cualquier rechazo del stop nuevo retira el antiguo (regresión de M2) | P2 | resuelto (`ca9285c`) |
 | N4 | Media | El funding que no es USD solo queda en una alerta; el export no lo ve (M4) | P1 | pendiente |
-| N5 | Baja/Media | Tras saltar un stop de catástrofe el bot reabre en el ciclo siguiente | P5 | pendiente |
+| N5 | Baja/Media | Tras saltar un stop de catástrofe el bot reabre en el ciclo siguiente | P5 | resuelto (`65eb429`) |
 | T1 | Baja | Hueco de test de A1: las dos capas de captura se tapan entre sí | mutación | pendiente |
 | T2 | Baja | Hueco de test de B3: ningún test distingue el día del tipo del BCE | mutación | pendiente |
 | N6 | Baja | `fills_seen` conserva los ids más antiguos al recortar | (lectura) | pendiente |
@@ -440,13 +440,14 @@ con moneda; el export convierte EUR y falla si es otra; aviso si `collateral` y 
 discrepan.
 
 ### N5 — Reapertura tras un stop de catástrofe
-**Gravedad:** baja/media · **Estado:** pendiente
+**Gravedad:** baja/media · **Estado:** resuelto en `65eb429`
 
 Tras saltar el stop, el ciclo siguiente reabre la posición del líder sin aviso específico. Con
 M13 el stop está al 7,5 % (2x) o 5 % (3x), alcanzable con volatilidad normal: cada repetición
 pierde esa distancia hasta que corta el drawdown. Corrección: un fill de origen
 `stop_catastrofe` o `liquidación` detiene el bot con alerta crítica.
 
+- **Regresión:** tests/integration/test_halted_ledger.py::test_a_catastrophe_stop_or_liquidation_halts_instead_of_reopening (stop y liquidación) y ::test_bot_and_manual_fills_do_not_halt
 ### T1 — Las dos capas de captura de A1
 **Gravedad:** baja · **Estado:** pendiente
 
