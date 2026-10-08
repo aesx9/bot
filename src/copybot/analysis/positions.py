@@ -68,6 +68,7 @@ class Position:
     realized_usd: Decimal = ZERO
     fills: int = 0
     origins: set[str] = field(default_factory=set)
+    closing_origin: str = ""  # origen del fill que la cerró (bot, stop, liquidación...)
 
     @property
     def exit_avg(self) -> Decimal | None:
@@ -113,6 +114,7 @@ def reconstruct(fills: Iterable[Fill]) -> tuple[list[Position], dict[str, Positi
                 remaining -= step
                 if pos.size == 0:
                     pos.closed_at = f.timestamp
+                    pos.closing_origin = f.origin
                     closed.append(pos)
                     del open_[f.symbol]
     return closed, open_

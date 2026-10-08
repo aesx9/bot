@@ -55,14 +55,14 @@ def rows(path: Path) -> list[dict[str, Any]]:
 
 
 def test_positions_file(data: Path) -> None:
-    pos_path, fund_path, notes = export(data, 2026, data / "out", RATES)
+    pos_path, fund_path, _, notes = export(data, 2026, data / "out", RATES)
     [p] = rows(pos_path)
-    assert (p["mercado"], p["direccion"], p["origen"]) == ("PF_XBTUSD", "largo",
-                                                          "bot+stop_catastrofe")
+    assert (p["mercado"], p["direccion"], p["origen_cierre"], p["origenes"]) == (
+        "PF_XBTUSD", "largo", "stop_catastrofe", "bot+stop_catastrofe")
     assert (p["resultado_bruto_usd"], p["comisiones_usd"]) == ("100.00", "0.85")
     assert (p["funding_pagado_usd"], p["funding_cobrado_usd"]) == ("2.33", "0.00")
     assert p["resultado_neto_usd"] == "96.82"
-    assert (p["fecha_tipo_bce"], p["tipo_eurusd_bce"]) == ("2026-10-02", "1.1650")
+    assert (p["fecha_tipo_bce_cierre"], p["tipo_eurusd_bce_cierre"]) == ("2026-10-02", "1.1650")
     assert p["resultado_bruto_eur"] == str((D(100) / D("1.1650")).quantize(D("0.01")))
     assert p["funding_pagado_eur"] == "2.00"  # 2.33 / 1.165 (tipo del día del pago)
     expected_net = (D(100) / D("1.1650") - D("0.85") / D("1.1650") - D(2)).quantize(D("0.01"))
@@ -72,7 +72,7 @@ def test_positions_file(data: Path) -> None:
 
 
 def test_funding_file_is_live_only_and_converted_on_each_date(data: Path) -> None:
-    _, fund_path, _ = export(data, 2026, data / "out", RATES)
+    _, fund_path, _, _ = export(data, 2026, data / "out", RATES)
     f = rows(fund_path)
     assert [(r["pagado_usd"], r["cobrado_usd"]) for r in f] == [("2.33", "0"), ("0", "1.16")]
     assert [(r["fecha_tipo_bce"], r["pagado_eur"], r["cobrado_eur"]) for r in f] == [
@@ -81,7 +81,7 @@ def test_funding_file_is_live_only_and_converted_on_each_date(data: Path) -> Non
 
 
 def test_other_years_are_empty(data: Path) -> None:
-    pos_path, fund_path, _ = export(data, 2025, data / "out", RATES)
+    pos_path, fund_path, _, _ = export(data, 2025, data / "out", RATES)
     assert rows(pos_path) == [] and rows(fund_path) == []
 
 
@@ -107,5 +107,39 @@ def test_cli_with_local_ecb_file(data: Path, capsys: pytest.CaptureFixture[str])
 
 
 def test_no_live_data_needs_no_rates(tmp_path: Path) -> None:
-    pos, fund, notes = export(tmp_path, 2026, tmp_path)  # sin datos: no descarga nada
+    pos, fund, _, notes = export(tmp_path, 2026, tmp_path)  # sin datos: no descarga nada
     assert rows(pos) == [] and rows(fund) == [] and notes == []
+
+
+def test_each_fee_uses_the_rate_of_its_own_day(tmp_path: Path) -> None:
+    rec = CsvRecorder(tmp_path)
+    mon = FRI + timedelta(days=3)  # lunes 5: tipo 1.16; viernes 2: 1.165
+    fill(rec, FRI, "buy", "1", "100", sym="PF_SOLUSD")
+    fill(rec, mon, "sell", "1", "100", sym="PF_SOLUSD")
+    rec.fee({"timestamp": FRI, "symbol": "PF_SOLUSD", "fee": D("1.165"), "currency": "USD",
+             "info": "futures trade", "booking_uid": "1"})
+    rec.fee({"timestamp": mon, "symbol": "PF_SOLUSD", "fee": D("1.16"), "currency": "USD",
+             "info": "futures trade", "booking_uid": "2"})
+    [p] = rows(export(tmp_path, 2026, tmp_path, RATES)[0])
+    assert p["comisiones_eur"] == "2.00"  # 1 EUR + 1 EUR, cada una en su fecha
+    assert p["fecha_tipo_bce_cierre"] == "2026-10-05"
+
+
+def test_summary_by_closing_origin(tmp_path: Path) -> None:
+    rec = CsvRecorder(tmp_path)
+    t = FRI
+    for sym, origin, pnl in [("PF_A", "bot", 10), ("PF_B", "manual", -4),
+                             ("PF_C", "liquidación", -50), ("PF_D", "bot", 6)]:
+        fill(rec, t, "buy", "1", "100", sym=sym, origin="bot" if origin != "manual" else origin)
+        fill(rec, t + timedelta(minutes=1), "sell", "1", str(100 + pnl), sym=sym, origin=origin)
+    rec.funding(FundingEvent(t + timedelta(days=3), "PF_Z", D(1), D(1), D("-1.16")), "live")
+    summary_path = export(tmp_path, 2026, tmp_path, RATES)[2]
+    s = {r["categoria"]: r for r in rows(summary_path)}
+    assert (s["bot"]["posiciones"], s["bot"]["resultado_bruto_usd"]) == ("2", "16.00")
+    assert s["manual"]["resultado_bruto_usd"] == "-4.00"
+    assert s["liquidación"]["resultado_bruto_usd"] == "-50.00"
+    assert s["stop_catastrofe"]["posiciones"] == "0"
+    assert s["TOTAL posiciones cerradas"]["resultado_bruto_usd"] == "-38.00"
+    fy = s["funding total del año (fiscal_funding)"]
+    assert (fy["funding_pagado_usd"], fy["funding_pagado_eur"]) == ("1.16", "1.00")
+    assert all("BCE" in r["fuente_tipo_cambio"] for r in s.values())

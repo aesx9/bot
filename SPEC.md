@@ -385,3 +385,18 @@ pública real:
   - Céntimos redondeados "half-up".
   - Una posición abierta no se declara hasta cerrarla (se avisa); su funding
     sí aparece en `fiscal_funding_<año>.csv`.
+
+## Decisiones antes de la fase 7
+1. Conversión a EUR: cada flujo al tipo del BCE de su fecha. El resultado de
+   la posición, al del día de cierre; cada comisión, al del día en que se
+   cobra; cada funding, al del día de su pago.
+2. El export fiscal incluye los fills manuales, marcados por origen, y añade
+   `fiscal_resumen_<año>.csv` con subtotales por origen (bot,
+   stop_catastrofe, liquidación, manual) y total. Cada posición se clasifica
+   por el origen del fill que la cerró; `origenes` lista todos.
+3. El usuario añadió `data-api.ecb.europa.eu`, `stats-data.hyperliquid.xyz` y
+   `api.telegram.org` a los dominios permitidos. En esta sesión el proxy sigue
+   respondiendo 403 a los tres, así que los formatos reales del BCE y del
+   leaderboard siguen pendientes de verificar.
+4. Primer arranque live a mano y después systemd. Documentado en el README,
+   con cómo evitar dos instancias a la vez.
