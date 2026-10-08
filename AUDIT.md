@@ -393,7 +393,7 @@ supervisada con dinero real.
 | T2 | Baja | Hueco de test de B3: ningún test distingue el día del tipo del BCE | mutación | resuelto (`98e9a0c`) |
 | N6 | Baja | `fills_seen` conserva los ids más antiguos al recortar | (lectura) | resuelto (`b1df33b`) |
 | N7 | Baja | `liquidation_fee` no se deduce como comisión | (lectura) | resuelto (`257940c`) |
-| N8 | Baja | La guarda de exposición no cuenta los activos con precio incoherente | (lectura) | pendiente |
+| N8 | Baja | La guarda de exposición no cuenta los activos con precio incoherente | (lectura) | resuelto (`c1a0ad3`) |
 | N9 | Baja | El README dice que `positions.csv` se escribe "al cambiar" | (lectura) | resuelto (`d40b652`) |
 | N10 | Baja | Los cierres de emergencia cuentan en el tope de nocional | (lectura) | resuelto (`c8b33be`) |
 
@@ -479,11 +479,12 @@ Las entradas de liquidación del log traen la comisión en `liquidation_fee`, qu
 
 - **Regresión:** tests/integration/test_live_ledger.py::test_liquidation_fee_is_recorded_and_deducted
 ### N8 — Guarda de exposición y precios incoherentes
-**Gravedad:** baja · **Estado:** pendiente
+**Gravedad:** baja · **Estado:** resuelto en `c1a0ad3`
 
 `engine.py`: las posiciones de los activos con precio incoherente (M11) se quitan de `current`
 antes de pasarlo al ejecutor, y la guarda de exposición total no las cuenta.
 
+- **Regresión:** tests/integration/test_engine.py::test_exposure_guard_counts_positions_of_assets_with_incoherent_prices
 ### N9 — README de `positions.csv`
 **Gravedad:** baja · **Estado:** resuelto en `d40b652`
 
