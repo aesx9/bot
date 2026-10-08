@@ -171,7 +171,17 @@ Dependencias
   total, slippage máximo del límite IOC 0,5 %, 10 órdenes/min,
   2.000 USD/h de nocional enviado, 5 ciclos seguidos con error y
   drawdown del 15 %.
-- "Órdenes a mercado" se implementan como límite IOC con tope de slippage.
+- Órdenes: límite IOC con tope de slippage del 0,5 % en lugar de mercado
+  puro. Las ejecuciones parciales se reconcilian en el ciclo siguiente.
+- Permiso de retiro: `--check` aborta si no puede verificar que la clave no
+  lo tiene. Si el endpoint no permite verificarlo, se exige restricción de
+  IP activa en la clave más una confirmación escrita.
+- Stop de catástrofe: activado por defecto en live, al 20 % del precio de
+  entrada, comprobando que queda antes del precio de liquidación.
+- Drawdown del 15 %: se cierra todo lo gestionado y el bot se detiene.
+- `rank_leaders`: usa el leaderboard no oficial de Hyperliquid, marcado
+  como tal, con opción de pasar una lista manual de wallets.
+- Colateral en Kraken: EUR.
 
 ## Fase 2 (respuestas a las decisiones pendientes)
 1. `fixed` = ratio fijo sobre el tamaño del líder.
@@ -216,4 +226,35 @@ pública real:
 - **Hyperliquid, modos de cuenta:** con "unified account" o "portfolio
   margin", la documentación indica que el capital no está en
   `clearinghouseState` sino en el estado spot. Se consulta
-  `userAbstraction` y esos modos no se operan (pendiente de decisión).
+  `userAbstraction` y esos modos no se operan.
+
+## Decisiones antes de la fase 4
+1. Se rechazan los líderes en unified account, portfolio margin o
+   dexAbstraction (`rank_leaders` también los descartará).
+2. Sin entorno demo de Kraken: la fase 5 no lo soporta.
+3. Sanity: N = 3 ciclos seguidos, con tope absoluto de 5.
+4. Perfil de arranque live: más estricto que los topes normales (1x de
+   apalancamiento total y 100 USD por activo, constantes en `limits.py`).
+   Se activa por defecto la primera vez que se arranca en live y solo se
+   quita de forma explícita (`--release-startup-profile` con confirmación
+   escrita).
+
+## Fase 4 (verificación para el modo paper, 2026-10-08)
+- **Tickers** (`GET /derivatives/api/v3/tickers`): `markPrice`, `bid`, `ask`,
+  `suspended`, `fundingRate` (absoluto) y `relativeFundingRate`. En los PF_,
+  `fundingRate` ≈ `relativeFundingRate` x precio: USD por unidad y periodo.
+- **Funding histórico** (`GET /derivatives/api/v3/historical-funding-rates`):
+  marcas cada 3.600 s en la API real. El intervalo no se supone: se deduce
+  de las marcas de tiempo. Signo: con tasa positiva pagan los largos.
+- **Libro** (`GET /derivatives/api/v3/orderbook?symbol=`): `orderBook.bids`
+  y `orderBook.asks` como `[precio, tamaño]`. La API real devuelve los bids
+  en orden ascendente: el bot ordena siempre ambos lados.
+- **EUR/USD:** perpetuo `PF_EURUSD` de Kraken; se usa su `indexPrice`.
+- **Haircut del colateral EUR:** la documentación de la API no lo
+  especifica. La ayuda de Kraken para el EEE (no accesible desde el entorno
+  de desarrollo, leída vía buscador) indica 0 % de haircut y 0 % de
+  conversión para EUR. Queda parametrizado (`paper.eur_haircut_pct = 0`).
+- **Comisión taker:** el endpoint de comisiones está obsoleto desde
+  2026-06-22 y la tabla oficial no es accesible desde aquí. Fuentes de
+  terceros dan 0,05 % para el nivel inicial: valor por defecto
+  parametrizado, a confirmar en la cuenta real.
