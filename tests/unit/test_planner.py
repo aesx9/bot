@@ -196,3 +196,19 @@ def test_priority_closes_then_reductions_then_opens_by_notional() -> None:
 def test_opens_are_ordered_by_notional_desc() -> None:
     acts = run({"A": D(1), "B": D(50), "C": D(20)}, {}, NOFILTER)
     assert [a.symbol for a in acts] == ["B", "A", "C"]  # 500, 100, 20 USD
+
+
+# --- M11: maxPositionSize del mercado ---
+
+
+def test_target_is_capped_at_the_market_max_position_size() -> None:
+    from copybot.models import MarketSpec
+
+    spec = MarketSpec("A", D("0.1"), D("0.01"), max_position_size=D("5"))
+    cfg = PlannerConfig(min_order_usd=D(0), rebalance_threshold_pct=D(0))
+    kw = {"managed": {"A"}, "prices": {"A": D(100)}, "markets": {"A": spec}, "cfg": cfg}
+    [a] = plan(targets={"A": D(8)}, current={}, **kw)
+    assert (a.kind.value, a.size) == ("open", D(5))
+    [a] = plan(targets={"A": D(-8)}, current={"A": D(-4)}, **kw)
+    assert (a.kind.value, a.size, a.side.value) == ("increase", D(1), "sell")
+    assert plan(targets={"A": D(8)}, current={"A": D(5)}, **kw) == []

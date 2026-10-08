@@ -216,6 +216,10 @@ class SanityConfig(_Strict):
     # Si el capital del líder cambia más de este % respecto al último dato
     # aceptado, no operar (puede ser un depósito o retiro: se alerta)
     max_equity_jump_pct: Dec = Field(default=Decimal("50"), gt=0)
+    # Un activo cuyo precio en Hyperliquid (dividido por su size_factor) difiere más de este %
+    # del mark de Kraken no se opera: casi seguro es otro activo o otra unidad (p. ej. kPEPE
+    # sin size_factor) y el tamaño saldría desproporcionado
+    max_price_divergence_pct: Dec = Field(default=Decimal("5"), gt=0, le=50)
     # Ciclos seguidos con algún control fallido antes de detener el bot
     halt_after_consecutive_failures: int = Field(default=3, ge=1)
     # Margen para relojes desincronizados: datos "del futuro" más allá de esto

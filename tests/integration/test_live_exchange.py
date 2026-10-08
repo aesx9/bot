@@ -274,6 +274,7 @@ async def test_full_live_cycle_with_startup_profile_and_stops(env: Env, tmp_path
     env.kraken.fill_price = D(100)  # el simulador ejecuta a precio fijo
     leader = FakeLeader("100000", SOL="5000")
     leader.clock = lambda: NOW
+    leader.mids.update(SOL=D(100), ETH=D(100))  # coherentes con las marcas de Kraken
     market.set_mark(SOL, "100")
     engine = Engine(cfg=cfg, state=env.state, store=StateStore(tmp_path / "s.json"),
                     leader=leader, market=market, exchange=env.live,
@@ -348,6 +349,7 @@ async def test_stop_is_placed_even_when_the_cycle_aborts_mid_execution(
     env.kraken.fill_price = D(100)
     leader = FakeLeader("100000", SOL="5000", ETH="5000")
     leader.clock = lambda: NOW
+    leader.mids.update(SOL=D(100), ETH=D(100))  # coherentes con las marcas de Kraken
     store = StateStore(tmp_path / "s.json")
     engine = Engine(cfg=cfg, state=env.state, store=store, leader=leader, market=market,
                     exchange=env.live, recorder=CsvRecorder(tmp_path), alerter=LogAlerter(),
@@ -382,6 +384,7 @@ async def test_first_cycle_fills_reach_the_fiscal_ledger(env: Env, tmp_path: Pat
     env.kraken.fill_price = D(100)
     leader = FakeLeader("100000", SOL="5000")
     leader.clock = lambda: NOW
+    leader.mids.update(SOL=D(100), ETH=D(100))  # coherentes con las marcas de Kraken
     engine = Engine(cfg=cfg, state=env.state, store=StateStore(tmp_path / "s.json"),
                     leader=leader, market=market, exchange=env.live,
                     recorder=CsvRecorder(tmp_path), alerter=LogAlerter(), kill_dirs=[tmp_path],
@@ -502,6 +505,7 @@ async def test_error_after_trading_does_not_skip_the_stop_sync(env: Env, tmp_pat
     env.kraken.fill_price = D(100)
     leader = FakeLeader("100000", SOL="5000")
     leader.clock = lambda: NOW
+    leader.mids.update(SOL=D(100), ETH=D(100))  # coherentes con las marcas de Kraken
     engine = Engine(cfg=cfg, state=env.state, store=StateStore(tmp_path / "s.json"),
                     leader=leader, market=market, exchange=env.live,
                     recorder=CsvRecorder(tmp_path), alerter=LogAlerter(), kill_dirs=[tmp_path],
@@ -527,6 +531,7 @@ async def test_kill_switch_cancels_the_catastrophe_stops(env: Env, tmp_path: Pat
     env.kraken.fill_price = D(100)
     leader = FakeLeader("100000", SOL="5000")
     leader.clock = lambda: NOW
+    leader.mids.update(SOL=D(100), ETH=D(100))  # coherentes con las marcas de Kraken
     engine = Engine(cfg=cfg, state=env.state, store=StateStore(tmp_path / "s.json"),
                     leader=leader, market=market, exchange=env.live,
                     recorder=CsvRecorder(tmp_path), alerter=LogAlerter(), kill_dirs=[tmp_path],

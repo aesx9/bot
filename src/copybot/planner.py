@@ -6,6 +6,7 @@ Reglas:
 - Toda acción que reduce |posición| es reduceOnly.
 - Cambio de dirección = cierre reduceOnly + apertura separada.
 - Los cierres totales (objetivo 0) nunca se filtran por umbrales.
+- Un objetivo nunca supera el máximo de posición del mercado (MarketSpec.max_position_size).
 - Los tamaños se redondean al paso del mercado Kraken (MarketSpec):
   aperturas y aumentos hacia abajo, reducciones parciales hacia arriba (sin
   pasar de la posición actual). Así ninguna acción deja la posición por
@@ -61,6 +62,11 @@ def plan(
         spec = markets.get(symbol)
         if spec is None:
             raise PlannerError(f"sin especificación de mercado para {symbol}")
+        # Nunca se pide una posición mayor que el máximo del mercado (maxPositionSize)
+        if abs(t) > spec.max_position_size:
+            t = spec.max_position_size if t > 0 else -spec.max_position_size
+            if t == c:
+                continue
 
         def act(
             kind: ActionKind, delta: Decimal, reduce_only: bool, reason: str,

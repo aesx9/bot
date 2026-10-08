@@ -400,3 +400,47 @@ async def test_run_forever_ws_trigger_reconnect_and_stop(world: World) -> None:
     assert triggers.count("websocket") == 1
     assert triggers.count("reconexión") == 2
     assert "rest" in triggers
+
+
+# --- M11: coherencia de precios Hyperliquid <-> Kraken ---
+
+
+async def test_asset_with_incoherent_price_is_not_traded_and_warns_once(tmp_path: Path) -> None:
+    """Un mapeo erróneo (otro activo o unidad) no debe dimensionar posiciones."""
+    w = World(tmp_path, FakeLeader("100000", BTC="1", ETH="10"))
+    w.leader.mids["BTC"] = D(825000)  # 10x el mark de Kraken
+    assert await w.cycle() is Outcome.OK
+    assert set(await w.positions()) == {ETH}  # el BTC no se abre; el resto sí
+    assert await w.cycle() is Outcome.OK
+    warnings = [t for lvl, t in w.alerts.sent if "precio incoherente" in t]
+    assert len(warnings) == 1 and "BTC -> PF_XBTUSD" in warnings[0]  # un solo aviso
+    w.leader.mids["BTC"] = D(82500)  # vuelve a cuadrar
+    await w.cycle()
+    assert set(await w.positions()) == {BTC, ETH}
+
+
+async def test_incoherent_price_leaves_an_existing_position_untouched(tmp_path: Path) -> None:
+    w = World(tmp_path, FakeLeader("100000", BTC="1", ETH="10"))
+    await w.cycle()
+    before = (await w.positions())[BTC]
+    w.leader.mids["BTC"] = D(1)  # dato absurdo: ni se amplía ni se cierra "por si acaso"
+    w.leader.positions["BTC"] = D(2)  # el líder duplica...
+    assert await w.cycle() is Outcome.OK
+    assert (await w.positions())[BTC] == before  # ...y el bot no se mueve con ese precio
+
+
+async def test_size_factor_makes_a_scaled_asset_coherent(tmp_path: Path) -> None:
+    """kPEPE: 1 unidad del líder = 1000 PEPE; sin size_factor el precio no cuadra."""
+    mark = FakeMarket().ticker_map["PF_PEPEUSD"].mark_price
+    leader = FakeLeader("100000", kPEPE="1000000000")
+    leader.mids["kPEPE"] = mark * 1000
+    base = {"symbols": {"overrides": {"kPEPE": "PF_PEPEUSD"}}}
+    w = World(tmp_path / "sin", leader, **base)
+    await w.cycle()
+    assert await w.positions() == {}  # precio incoherente: no se opera
+    leader2 = FakeLeader("100000", kPEPE="1000000000")
+    leader2.mids["kPEPE"] = mark * 1000
+    w2 = World(tmp_path / "con", leader2,
+               symbols={"overrides": {"kPEPE": "PF_PEPEUSD"}, "size_factor": {"kPEPE": 1000}})
+    await w2.cycle()
+    assert set(await w2.positions()) == {"PF_PEPEUSD"}

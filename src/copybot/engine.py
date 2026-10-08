@@ -152,6 +152,7 @@ class Engine:
         self._mapper_markets: set[str] = set()
         # Último mercado y precio conocidos: permiten cerrar en emergencia aunque Kraken
         # deje de listar un mercado o falle la lectura pública
+        self._price_warned: set[str] = set()  # activos con precio incoherente ya avisados
         self._known_markets: dict[str, MarketSpec] = {}
         self._last_prices: dict[str, Decimal] = {}
         self._lock = asyncio.Lock()
@@ -336,6 +337,11 @@ class Engine:
         if missing:
             raise KrakenDataError(f"mercados gestionados no disponibles: {sorted(missing)}")
 
+        suspect = await self._price_mismatches(coin_for, snap.mids, prices, mapper)
+        for sym in suspect:  # sin objetivo nuevo ni ajustes para ese activo en este ciclo
+            eligible.pop(coin_for.pop(sym), None)
+        plan_managed = managed - suspect
+
         equity = await self._ex.equity_usd()
         all_positions = await self._ex.positions()
         current = {s: all_positions[s] for s in managed if all_positions.get(s)}
@@ -349,7 +355,8 @@ class Engine:
             leader_positions={coin_for[s]: eligible[coin_for[s]] for s in coin_for},
             my_equity=equity, prices=prices, mapper=mapper, cfg=self._sizing_cfg,
         )
-        actions = plan(targets=sized.targets, current=current, managed=managed,
+        current = {s: p for s, p in current.items() if s not in suspect}
+        actions = plan(targets=sized.targets, current=current, managed=plan_managed,
                        prices=prices, markets=markets, cfg=cfg.planner)
         ctx = ExecutionContext(
             mode=self._ex.mode,
@@ -400,6 +407,34 @@ class Engine:
             self._save()
         except Exception:
             log.exception("no se pudo guardar el estado tras abortar el ciclo")
+
+    async def _price_mismatches(
+        self, coin_for: dict[str, str], mids: dict[str, Decimal], prices: dict[str, Decimal],
+        mapper: SymbolMapper,
+    ) -> set[str]:
+        """Símbolos cuyo precio en Hyperliquid no cuadra con el mark de Kraken. Si el mapeo
+        fuera erróneo (otro activo con el mismo ticker, otra unidad), el tamaño saldría
+        desproporcionado y solo lo frenaría el tope en USD por activo."""
+        tolerance = self.cfg.sanity.max_price_divergence_pct
+        bad: dict[str, tuple[str, Decimal, Decimal]] = {}
+        for sym, coin in coin_for.items():
+            mid, mark = mids.get(coin), prices.get(sym)
+            if mid is None or mark is None:
+                continue
+            expected = mid / mapper.size_factor(coin)
+            divergence = abs(expected / mark - 1) * 100
+            if divergence > tolerance:
+                bad[sym] = (coin, expected, mark)
+        self._price_warned &= set(bad)  # al corregirse, vuelve a avisar si reaparece
+        for sym in sorted(set(bad) - self._price_warned):
+            self._price_warned.add(sym)
+            coin, expected, mark = bad[sym]
+            await self._best_effort(
+                Level.WARNING,
+                f"{coin} -> {sym}: precio incoherente (Hyperliquid/size_factor {expected:.6g} "
+                f"vs mark de Kraken {mark:.6g}, más de {tolerance} %): no se opera ese activo. "
+                "¿Falta un override o un size_factor?")
+        return set(bad)
 
     async def _track_pacing(self, deferred: int) -> CycleReport | None:
         """Aplazar órdenes es normal en la sincronización inicial (primer reparto
