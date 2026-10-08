@@ -68,7 +68,8 @@ haircut del 2,2 %.
   esa misma config y esa misma clave, y tu confirmación escrita.
 - **No escribe secretos** en logs, CSV, alertas ni excepciones: se redactan.
 - **No toca tus posiciones manuales** en mercados que no gestiona. Solo opera
-  activos del líder o que el bot ya tenga registrados.
+  activos del líder o que el bot ya tenga registrados. Un fill ajeno (cuyo cliOrdId no
+  envió el bot) en un mercado que gestiona lo detiene: no opera a mano en esos mercados.
 - **No puede pasar de los topes absolutos** de `src/copybot/limits.py`. Si la
   config los supera, el bot no arranca.
 
@@ -358,7 +359,9 @@ mientras sigue vivo reintentando un cierre, pero un bot detenido y parado no ve 
 después en la cuenta (un stop de catástrofe que salta, una liquidación, un cierre manual).
 `sudo copybot-cli --sync-ledger` lo trae: solo hace lecturas en Kraken (fills, log de cuenta y
 posiciones), no envía ni cancela órdenes y no quita la parada. Ejecútalo tras cualquier parada,
-antes de abandonar el bot y antes del export fiscal.
+antes de abandonar el bot y antes del export fiscal. Si trae un fill protector (stop de
+catástrofe, liquidación, desapalancamiento o un fill ajeno en un mercado gestionado) lo muestra,
+lo guarda para `--reset-halt` y deja el bot detenido aunque no lo estuviera.
 
 ## Paradas automáticas y cómo reanudar
 
@@ -376,12 +379,13 @@ antes de abandonar el bot y antes del export fiscal.
 | 3 ciclos seguidos con datos del líder sospechosos | Se detiene sin operar | ¿Depósito o retiro del líder? |
 | 5 ciclos seguidos con error | Se detiene | Logs: red, API o claves |
 | Tope absoluto superado | Se detiene | Revisar la config |
-| Saltó un stop de catástrofe o hubo una liquidación (fill en el libro) | Se detiene sin reabrir y avisa con el fill | Revisar la cuenta y la volatilidad antes de reanudar |
+| Saltó un stop de catástrofe, hubo una liquidación o un desapalancamiento (fillType `liquidation`, `assignor`, `unwindBankrupt`, `unwindCounterparty`) o un fill ajeno en un mercado gestionado | Se detiene sin reabrir y avisa con el fill | Revisar la cuenta y la volatilidad antes de reanudar |
 
 Las paradas **persisten tras reiniciar**. Para reanudar:
 `sudo copybot-cli --reset-halt`, que pide escribir `REANUDAR` y reinicia la
-referencia de los controles del líder. En live hay que repetir después el
-primer arranque a mano.
+referencia de los controles del líder. Si hay fills protectores sin revisar (los guardan el bot
+y `--sync-ledger`; también salen en `--status`), antes los lista y pide escribir
+`HE REVISADO LOS FILLS`. En live hay que repetir después el primer arranque a mano.
 
 ## Informes, fiscalidad y elección de líder
 
@@ -396,7 +400,8 @@ sudo -u copybot env PYTHONPATH=src .venv/bin/python scripts/report.py \
 **`report`**: rentabilidad y drawdown máximo (sobre `equity.csv`; incluye
 depósitos y retiros), PnL realizado, slippage medio y ponderado,
 comisiones, funding pagado, cobrado y neto y retraso medio, global y por
-activo. Nunca mezcla paper y live.
+activo. Las comisiones y el funding en EUR (`fees.csv`, `funding_moneda.csv`) se muestran
+aparte, sin convertir; en otra moneda no se suman y se avisa. Nunca mezcla paper y live.
 
 **`export_fiscal`** (solo operaciones reales; **paper se excluye siempre**):
 
@@ -410,7 +415,8 @@ Genera cuatro ficheros:
 - `fiscal_posiciones_<año>.csv`: una fila por posición cerrada en el año,
   con resultado bruto, comisiones, funding pagado y cobrado (columnas
   separadas) y neto, en USD y en EUR. Incluye el origen del cierre (bot, stop
-  de catástrofe, liquidación o manual) y todos los orígenes que intervinieron.
+  de catástrofe, liquidación, desapalancamiento o manual, que es cualquier fill cuyo
+  cliOrdId no envió el bot) y todos los orígenes que intervinieron.
 - `fiscal_funding_<año>.csv`: cada pago o cobro de funding, también de
   posiciones aún abiertas.
 - `fiscal_resumen_<año>.csv`: subtotales por origen y total.

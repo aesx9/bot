@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Collection, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -125,14 +125,25 @@ async def update_ledger(exchange: Exchange, recorder: CsvRecorder, now: datetime
 
 
 # Fills que significan que la protección del exchange actuó: el bot no debe reabrir
-PROTECTIVE_ORIGINS = ("stop_catastrofe", "liquidación")
+PROTECTIVE_ORIGINS = ("stop_catastrofe", "liquidación", "desapalancamiento")
 
 
-def protective_fills_note(fills: Sequence[dict[str, Any]]) -> str:
-    """'' si ningún fill es de un stop de catástrofe o una liquidación; si no, el detalle."""
-    hits = [f for f in fills if f.get("origin") in PROTECTIVE_ORIGINS]
-    return "; ".join(f"{f['origin']} en {f['symbol']} ({f['side']} {f['size']} a {f['price']}, "
-                     f"fill {f['fill_id']})" for f in hits)
+def protective_fills_note(fills: Sequence[dict[str, Any]], managed: Collection[str]) -> str:
+    """'' si ningún fill es protector; si no, el detalle. Protector = stop de catástrofe,
+    liquidación, desapalancamiento o un fill ajeno (cliOrdId que el bot no envió) en un símbolo
+    gestionado: así un stop disparado que no conserve su cliOrdId cs- tampoco pasa inadvertido."""
+    hits = [f for f in fills if f.get("origin") in PROTECTIVE_ORIGINS
+            or (f.get("origin") == "manual" and f.get("symbol") in managed)]
+    return "; ".join(
+        f"{'fill ajeno' if f['origin'] == 'manual' else f['origin']} en {f['symbol']} "
+        f"({f['side']} {f['size']} a {f['price']}, fill {f['fill_id']}, "
+        f"cliOrdId {f.get('cli_ord_id') or '-'})" for f in hits)
+
+
+def record_protective_note(state: BotState, note: str) -> None:
+    """Deja la nota pendiente de revisión: --reset-halt la muestra y exige confirmarla."""
+    if note and note not in state.protective_fills_unreviewed:
+        state.protective_fills_unreviewed.append(note)
 
 
 class LoopTaskDied(RuntimeError):
@@ -362,11 +373,12 @@ class Engine:
             update = await update_ledger(self._ex, self._rec, self._now(), clock=self._now)
             for text in update.alerts:
                 await self._alert.alert(Level.CRITICAL, text)
-            note = protective_fills_note(update.fills)
+            note = protective_fills_note(update.fills, self.state.managed_symbols)
+            record_protective_note(self.state, note)
+            self._save()
             if note:
                 await self._alert.alert(Level.CRITICAL, f"con el bot detenido actuó la "
-                                        f"protección del exchange: {note}")
-            self._save()
+                                        f"protección del exchange o hubo fills ajenos: {note}")
         except Exception as exc:
             log.exception("no se pudo actualizar el libro fiscal con el bot detenido")
             await self._best_effort(
@@ -400,6 +412,7 @@ class Engine:
     async def _trade(self, leader_time: datetime | None) -> CycleReport:
         cfg, state = self.cfg, self.state
         await self._executor.reconcile_pending()
+        managed_before = set(state.managed_symbols)
         prepare_ledger = getattr(self._ex, "prepare_ledger", None)
         if prepare_ledger is not None:  # live: línea base del libro ANTES de la primera orden
             await prepare_ledger(self._now())
@@ -409,7 +422,7 @@ class Engine:
                                          fills_only=True)
             for text in update.alerts:
                 await self._alert.alert(Level.CRITICAL, text)
-            halted = await self._halt_on_protective_fills(update)
+            halted = await self._halt_on_protective_fills(update, managed_before)
             if halted is not None:
                 return halted
 
@@ -507,7 +520,8 @@ class Engine:
         # una posición recién abierta sin protección
         await self._sync_protective_stops(after, markets)
         update = await self._after_trading(snap.equity_usd, after, positions_at)
-        halted = await self._halt_on_protective_fills(update)
+        halted = await self._halt_on_protective_fills(
+            update, managed_before | state.managed_symbols)
         if halted is not None:
             return halted
 
@@ -529,13 +543,16 @@ class Engine:
             detail += f", {execution.skipped} omitidas por superar la exposición permitida"
         return CycleReport(Outcome.OK, detail, orders=len(results))
 
-    async def _halt_on_protective_fills(self, update: LedgerUpdate) -> CycleReport | None:
-        note = protective_fills_note(update.fills)
+    async def _halt_on_protective_fills(self, update: LedgerUpdate,
+                                        managed: Collection[str]) -> CycleReport | None:
+        note = protective_fills_note(update.fills, managed)
         if not note:
             return None
+        record_protective_note(self.state, note)
         return await self._halt(
-            f"actuó la protección del exchange: {note}. El bot se detiene para no reabrir la "
-            "posición; revisa la cuenta antes de --reset-halt")
+            f"actuó la protección del exchange o hubo fills ajenos en símbolos gestionados: "
+            f"{note}. El bot se detiene para no reabrir la posición; revisa la cuenta antes de "
+            "--reset-halt")
 
     async def _protect_after_abort(self, markets: dict[str, MarketSpec]) -> None:
         """Mejor esfuerzo: guardar lo gestionado y colocar los stops de catástrofe."""

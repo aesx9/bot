@@ -143,24 +143,40 @@ def test_sync_ledger_is_only_for_live(tmp_path: Path, capsys: Any) -> None:
 # --- N5: un stop de catástrofe o una liquidación detienen el bot ---
 
 
+# kind -> (cliOrdId: "stop" = el del stop cs-, fillType, texto esperado en el motivo)
+PROTECTIVE_KINDS: dict[str, tuple[str | None, str, str]] = {
+    "stop": ("stop", "taker", "stop_catastrofe"),
+    "liquidation": (None, "liquidation", "liquidación"),
+    "assignor": (None, "assignor", "liquidación"),
+    "unwindBankrupt": (None, "unwindBankrupt", "desapalancamiento"),
+    "unwindCounterparty": (None, "unwindCounterparty", "desapalancamiento"),
+    # el stop salta pero Kraken no conserva el cliOrdId cs- (o lo cambia): fill ajeno
+    "stop-sin-cliOrdId": (None, "taker", "fill ajeno"),
+    "stop-con-otro-cliOrdId": ("otro", "taker", "fill ajeno"),
+}
+
+
 def _protective_fill(env: Env, kind: str) -> None:  # noqa: F811
     """Kraken ejecuta el stop (o liquida): la posición desaparece y aparece el fill."""
+    cli, fill_type, _ = PROTECTIVE_KINDS[kind]
     [stop] = env.kraken.open_orders
     env.kraken.open_orders = []
     env.kraken.positions = []
     env.kraken.fills.append({
-        "cliOrdId": stop["cliOrdId"] if kind == "stop" else None,
+        "cliOrdId": stop["cliOrdId"] if cli == "stop" else cli,
         "fillTime": "2026-10-08T12:00:30.000Z",
-        "fillType": "taker" if kind == "stop" else "liquidation", "fill_id": f"{kind}-fill",
+        "fillType": fill_type, "fill_id": f"{kind}-fill",
         "order_id": "o", "price": "85", "side": "sell", "size": stop["unfilledSize"],
         "symbol": SOL})
 
 
-@pytest.mark.parametrize("kind", ["stop", "liquidation"])
+@pytest.mark.parametrize("kind", list(PROTECTIVE_KINDS))
 async def test_a_catastrophe_stop_or_liquidation_halts_instead_of_reopening(
         env: Env, tmp_path: Path, kind: str) -> None:  # noqa: F811
     """N5 (PoC P5): tras saltar el stop, el ciclo siguiente reabría la posición del líder; con
-    el stop al 5-7,5 % la volatilidad normal lo repetía hasta cortar el drawdown."""
+    el stop al 5-7,5 % la volatilidad normal lo repetía hasta cortar el drawdown. Refuerzo: lo
+    mismo con assignor y unwind*, y con un fill ajeno en un símbolo gestionado (un stop que
+    salta sin conservar el cliOrdId cs-), para no depender de que Kraken lo conserve."""
     clock = {"now": NOW}
     engine = live_engine(env, tmp_path, clock)
     assert (await engine.cycle()).outcome is Outcome.OK
@@ -170,8 +186,9 @@ async def test_a_catastrophe_stop_or_liquidation_halts_instead_of_reopening(
     report = await engine.cycle()
     assert report.outcome is Outcome.HALTED
     assert len(env.kraken.sends("ioc")) == sends  # no reabre
-    origin = "stop_catastrofe" if kind == "stop" else "liquidación"
+    origin = PROTECTIVE_KINDS[kind][2]
     assert origin in env.state.halt_reason
+    assert any(origin in n for n in env.state.protective_fills_unreviewed)
     alerter = engine._alert
     assert isinstance(alerter, LogAlerter)
     assert any(level.value == "CRÍTICO" and origin in text for level, text in alerter.sent)
@@ -185,3 +202,118 @@ async def test_bot_and_manual_fills_do_not_halt(env: Env, tmp_path: Path) -> Non
                              "fillType": "taker", "fill_id": "manual", "order_id": "o",
                              "price": "100", "side": "buy", "size": "1", "symbol": "PF_XBTUSD"})
     assert (await engine.cycle()).outcome is Outcome.OK
+
+
+async def test_a_foreign_fill_while_trading_in_a_managed_symbol_halts_after_the_cycle(
+        env: Env, tmp_path: Path) -> None:  # noqa: F811
+    """El fill ajeno puede aparecer entre la lectura previa y el final del ciclo: también
+    detiene (tras operar), con los símbolos gestionados de antes y de después del ciclo."""
+    clock = {"now": NOW}
+    engine = live_engine(env, tmp_path, clock)
+    leader = engine._leader
+    assert isinstance(leader, FakeLeader)
+    leader.clock = lambda: clock["now"]
+    assert (await engine.cycle()).outcome is Outcome.OK
+    real_positions = env.live.positions
+
+    async def positions_then_foreign_fill() -> dict[str, D]:
+        out = await real_positions()
+        if not any(f["fill_id"] == "ajeno" for f in env.kraken.fills):
+            env.kraken.fills.append({
+                "cliOrdId": None, "fillTime": "2026-10-08T12:00:40.000Z", "fillType": "taker",
+                "fill_id": "ajeno", "order_id": "o", "price": "100", "side": "buy", "size": "1",
+                "symbol": SOL})
+        return out
+
+    env.live.positions = positions_then_foreign_fill  # type: ignore[method-assign]
+    clock["now"] = NOW + timedelta(minutes=1)
+    report = await engine.cycle()
+    assert report.outcome is Outcome.HALTED and "fill ajeno" in report.detail
+
+
+# --- R1: --sync-ledger y --reset-halt con fills protectores ---
+
+
+def _sync_state(tmp_path: Path, halted: bool) -> StateStore:
+    st = StateStore(tmp_path / "data" / "live" / "state.json")
+    st.save(BotState(mode="live", halted=halted, halt_reason="controles del líder" if halted
+                     else "", managed_symbols={SOL},
+                     live_funding_cursor_ms=int(NOW.timestamp() * 1000) - 1000))
+    return st
+
+
+def _sync_with_stop_fill(tmp_path: Path, cli: str | None = "cs-abc") -> None:
+    from tests.fake_kraken import FakeKraken
+
+    kraken = FakeKraken()
+    kraken.fills = [{"cliOrdId": cli, "fillTime": "2026-10-08T12:00:00.000Z",
+                     "fillType": "taker", "fill_id": "stop1", "order_id": "o", "price": "85",
+                     "side": "sell", "size": "1", "symbol": SOL}]
+    with respx.mock(assert_all_called=False) as router:
+        kraken.install(router)
+        assert main(live_args(tmp_path, "--sync-ledger")) == EXIT_OK
+    assert kraken.sends() == [] and kraken.cancels() == []
+
+
+@pytest.mark.parametrize("halted", [True, False])
+def test_sync_ledger_shows_and_keeps_protective_fills_and_reset_requires_review(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str], halted: bool) -> None:
+    """R1 (revisión de la segunda auditoría): --sync-ledger importaba el fill del stop y solo
+    decía "1 fills"; al marcarlo como visto, tras --reset-halt el bot reabría sin aviso.
+    Ahora lo muestra, lo guarda en el estado (y detiene el bot si no lo estaba) y
+    --reset-halt exige confirmar que se ha revisado."""
+    from tests.integration.test_main import answer
+
+    write_env(tmp_path)
+    st = _sync_state(tmp_path, halted)
+    _sync_with_stop_fill(tmp_path)
+    out = capsys.readouterr().out
+    assert "ATENCIÓN" in out and "stop_catastrofe en PF_SOLUSD" in out and "stop1" in out
+    after = st.load()
+    assert after.halted  # detenido aunque no lo estuviera: no reabre al arrancar
+    assert len(after.protective_fills_unreviewed) == 1
+    assert "stop1" in after.protective_fills_unreviewed[0]
+
+    # REANUDAR solo no basta: hay que confirmar la revisión de los fills
+    assert main(live_args(tmp_path, "--reset-halt"), prompt=answer("REANUDAR")) == EXIT_USAGE
+    assert "FILLS PROTECTORES SIN REVISAR" in capsys.readouterr().out
+    assert st.load().halted and st.load().protective_fills_unreviewed
+
+    phrases = iter(["HE REVISADO LOS FILLS", "REANUDAR"])
+    assert main(live_args(tmp_path, "--reset-halt"),
+                prompt=lambda _p: next(phrases)) == EXIT_OK
+    final = st.load()
+    assert not final.halted and final.protective_fills_unreviewed == []
+
+
+def test_sync_ledger_flags_a_foreign_fill_in_a_managed_symbol(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Un stop disparado sin su cliOrdId cs- llega como fill ajeno: también cuenta."""
+    write_env(tmp_path)
+    st = _sync_state(tmp_path, halted=True)
+    _sync_with_stop_fill(tmp_path, cli=None)
+    assert "fill ajeno en PF_SOLUSD" in capsys.readouterr().out
+    assert st.load().protective_fills_unreviewed
+
+
+def test_sync_ledger_without_protective_fills_changes_nothing_else(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    write_env(tmp_path)
+    st = StateStore(tmp_path / "data" / "live" / "state.json")
+    st.save(BotState(mode="live", managed_symbols={SOL}, sent_orders=["c-bot"],
+                     live_funding_cursor_ms=int(NOW.timestamp() * 1000) - 1000))
+    _sync_with_stop_fill(tmp_path, cli="c-bot")
+    assert "ATENCIÓN" not in capsys.readouterr().out
+    after = st.load()
+    assert not after.halted and after.protective_fills_unreviewed == []
+
+
+async def test_halted_ledger_keeps_protective_fills_for_review(
+        env: Env, tmp_path: Path) -> None:  # noqa: F811
+    """Con el bot detenido el libro también los guarda para --reset-halt (no solo alerta)."""
+    engine = live_engine(env, tmp_path)
+    assert (await engine.cycle()).outcome is Outcome.OK
+    env.state.halted, env.state.halt_reason = True, "prueba"
+    _protective_fill(env, "stop")
+    assert (await engine.cycle()).outcome is Outcome.HALTED
+    assert any("stop_catastrofe" in n for n in env.state.protective_fills_unreviewed)

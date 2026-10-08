@@ -189,6 +189,7 @@ async def test_ledger_records_real_fills_and_fees_but_not_history(env: Env) -> N
                          "size": "1", "symbol": "PF_SOLUSD"}]
     await env.live.collect_funding(NOW)  # primer arranque: lo anterior no se registra
     assert env.live.drain_ledger() == ([], [])
+    env.state.sent_orders.append("c-bot")  # lo que hace el ejecutor antes de enviar
     await env.live.send_order(req(cli="c-bot"))
     env.kraken.fills.append({"cliOrdId": "cs-x", "fillTime": "2026-10-08T12:03:00Z",
                              "fillType": "taker", "fill_id": "stop", "order_id": "o2",
@@ -207,6 +208,27 @@ async def test_ledger_records_real_fills_and_fees_but_not_history(env: Env) -> N
     env.live.commit_ledger()
     await env.live.collect_funding(NOW + timedelta(minutes=12))
     assert env.live.drain_ledger()[0] == []  # sin duplicados
+
+
+@pytest.mark.parametrize(("fill_type", "cli", "origin"), [
+    ("liquidation", None, "liquidación"), ("partialLiquidation", None, "liquidación"),
+    ("assignor", None, "liquidación"), ("unwindBankrupt", None, "desapalancamiento"),
+    ("unwindCounterparty", None, "desapalancamiento"), ("taker", "cs-x", "stop_catastrofe"),
+    ("taker", None, "manual"), ("taker", "ajeno", "manual"), ("maker", "c-bot", "bot"),
+    ("taker", "c-pend", "bot"),
+])
+async def test_fill_origin_only_trusts_the_bots_own_cli_ord_ids(
+        env: Env, fill_type: str, cli: str | None, origin: str) -> None:
+    """Refuerzo de N5: "bot" solo si el cliOrdId es de una orden que el bot envió (o está
+    enviando); assignor y unwind* son también cierres del exchange."""
+    await env.live.prepare_ledger(NOW)  # línea base
+    env.state.sent_orders = ["c-bot"]
+    env.state.pending_orders = {"c-pend": {}}
+    env.kraken.fills = [{"cliOrdId": cli, "fillTime": "2026-10-08T12:03:00Z",
+                         "fillType": fill_type, "fill_id": "f", "order_id": "o", "price": "80",
+                         "side": "sell", "size": "1", "symbol": SOL}]
+    await env.live.collect_funding(NOW + timedelta(minutes=6))
+    assert [f["origin"] for f in env.live.drain_ledger()[0]] == [origin]
 
 
 # --- stops de catástrofe ---

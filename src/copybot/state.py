@@ -72,6 +72,12 @@ class BotState:
     funding_sign_verified: bool = False  # el signo del funding real ya cuadró una vez
     fills_seen: list[str] = field(default_factory=list)  # fill_id ya registrados (live)
     log_seen: list[str] = field(default_factory=list)  # booking_uid del log de cuenta ya vistos
+    # cliOrdId de las órdenes que ha enviado el bot (las más recientes): un fill en un símbolo
+    # gestionado con otro cliOrdId es ajeno (manual, o un stop disparado que perdió el suyo)
+    sent_orders: list[str] = field(default_factory=list)
+    # Notas de fills protectores (stop de catástrofe, liquidación, desapalancamiento, fill
+    # ajeno en un símbolo gestionado) que nadie ha revisado: --reset-halt exige confirmarlas
+    protective_fills_unreviewed: list[str] = field(default_factory=list)
     paper: dict[str, Any] | None = None  # cuenta simulada (PaperAccount.to_dict)
 
     def bind_mode(self, mode: str) -> None:
@@ -110,6 +116,8 @@ class BotState:
             "funding_sign_verified": self.funding_sign_verified,
             "fills_seen": self.fills_seen,
             "log_seen": self.log_seen,
+            "sent_orders": self.sent_orders,
+            "protective_fills_unreviewed": self.protective_fills_unreviewed,
             "paper": self.paper,
         }
 
@@ -143,6 +151,8 @@ class BotState:
             funding_sign_verified=bool(d.get("funding_sign_verified", False)),
             fills_seen=list(d.get("fills_seen", [])),
             log_seen=list(d.get("log_seen", [])),
+            sent_orders=list(d.get("sent_orders", [])),
+            protective_fills_unreviewed=list(d.get("protective_fills_unreviewed", [])),
             paper=d.get("paper"),
         )
 

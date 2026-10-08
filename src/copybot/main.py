@@ -47,7 +47,16 @@ from copybot.credentials import (
     load_kraken_credentials,
     load_telegram_credentials,
 )
-from copybot.engine import CycleReport, Engine, LedgerUpdate, LoopTaskDied, Outcome, update_ledger
+from copybot.engine import (
+    CycleReport,
+    Engine,
+    LedgerUpdate,
+    LoopTaskDied,
+    Outcome,
+    protective_fills_note,
+    record_protective_note,
+    update_ledger,
+)
 from copybot.exchange.base import Exchange, ExchangeError
 from copybot.exchange.kraken_auth import KrakenPrivateClient
 from copybot.exchange.kraken_public import KrakenMarketData
@@ -61,6 +70,7 @@ from copybot.risk import (
     activate_startup_profile_on_first_live,
     catastrophe_stop_pct,
     effective_sizing,
+    halt,
     release_startup_profile,
     reset_halt,
 )
@@ -71,6 +81,7 @@ from copybot.state import AlreadyRunning, BotState, InstanceLock, StateError, St
 log = logging.getLogger("copybot")
 
 RESET_PHRASE = "REANUDAR"
+REVIEWED_PHRASE = "HE REVISADO LOS FILLS"
 LIVE_PHRASE = "OPERAR CON DINERO REAL"
 RELEASE_PHRASE = "QUITAR PERFIL DE ARRANQUE"
 
@@ -115,6 +126,7 @@ def status_text(state: BotState, cfg: Config, running: bool | None = None) -> st
         "simbolos_gestionados": sorted(state.managed_symbols),
         "preexistentes_lider": sorted(state.preexisting),
         "ordenes_pendientes": sorted(state.pending_orders),
+        "fills_protectores_sin_revisar": state.protective_fills_unreviewed,
         "perfil_arranque_live": state.live_startup_profile,
     }
     if state.paper:
@@ -328,15 +340,27 @@ def main(argv: Sequence[str] | None = None, prompt: Callable[[str], str] = input
             state = store.load()
             state.bind_mode(cfg.mode.value)
             if args.reset_halt:
-                if not state.halted:
+                unreviewed = list(state.protective_fills_unreviewed)
+                if not state.halted and not unreviewed:
                     print("El bot no está detenido.")
                     return EXIT_OK
-                print(f"Motivo de la parada: {state.halt_reason}")
+                print(f"Motivo de la parada: {state.halt_reason or '-'}")
+                if unreviewed:
+                    print("FILLS PROTECTORES SIN REVISAR (stop de catástrofe, liquidación, "
+                          "desapalancamiento o fills ajenos en símbolos gestionados):")
+                    for note in unreviewed:
+                        print(f"  - {note}")
+                    print("Al reanudar, el bot volverá a copiar al líder y puede reabrir esas "
+                          "posiciones. Revisa la cuenta en Kraken antes de seguir.")
+                    if not confirm(REVIEWED_PHRASE, prompt):
+                        print("Cancelado.")
+                        return EXIT_USAGE
                 print(f"Recuerda borrar el fichero {STOP_FILENAME} si existe.")
                 if not confirm(RESET_PHRASE, prompt):
                     print("Cancelado.")
                     return EXIT_USAGE
                 reset_halt(state)
+                state.protective_fills_unreviewed = []
                 store.save(state)
                 print("Parada quitada. La referencia de los controles del líder se reinicia.")
                 return EXIT_OK
@@ -358,11 +382,21 @@ def main(argv: Sequence[str] | None = None, prompt: Callable[[str], str] = input
                     return EXIT_USAGE
                 creds = load_kraken_credentials(args.env)
                 update = asyncio.run(sync_ledger_command(cfg, state, creds))
+                # Un fill protector importado aquí ya no lo verá el bot al reanudar: se guarda
+                # para que --reset-halt lo muestre y, como haría el bot, se detiene
+                note = protective_fills_note(update.fills, state.managed_symbols)
+                if note:
+                    record_protective_note(state, note)
+                    halt(state, f"fills protectores importados con --sync-ledger: {note}")
                 store.save(state)
                 print(f"Libro actualizado: {len(update.fills)} fills, {update.fees} comisiones, "
                       f"{update.funding} pagos de funding.")
                 for text in update.alerts:
                     print(f"AVISO: {text}")
+                if note:
+                    print(f"ATENCIÓN: actuó la protección del exchange o hubo fills ajenos en "
+                          f"símbolos gestionados: {note}. El bot queda detenido; revisa la "
+                          "cuenta en Kraken y después --reset-halt.")
                 return EXIT_OK
             if args.check:
                 creds = load_kraken_credentials(args.env)

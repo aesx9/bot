@@ -48,6 +48,9 @@ from copybot.state import BotState, StateStore
 
 log = logging.getLogger(__name__)
 ZERO = Decimal(0)
+# cliOrdId recordados de las órdenes enviadas: de sobra para que el libro (que lee /fills en
+# cada ciclo) vea los fills de todas ellas antes de olvidarlas
+SENT_ORDERS_MEMORY = 1000
 
 
 class CircuitBreakerTripped(Exception):
@@ -208,6 +211,10 @@ class Executor:
             # gestionado AHORA: si el ciclo se aborta después de este envío, la posición
             # abierta ya consta (kill switch, drawdown y stops la cubren).
             self._state.pending_orders[req.cli_ord_id] = info
+            # Y queda constancia de que el cliOrdId es del bot: el libro distingue así sus
+            # fills de los ajenos (que detienen el bot si tocan un símbolo gestionado)
+            self._state.sent_orders = (self._state.sent_orders
+                                       + [req.cli_ord_id])[-SENT_ORDERS_MEMORY:]
             self._state.managed_symbols.add(a.symbol)
             # Una reduceOnly cuenta como orden (límite por minuto) pero no como nocional: el
             # tope existe para frenar el riesgo que se AÑADE, y detener el bot al copiar un

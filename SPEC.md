@@ -360,9 +360,14 @@ pública real:
   queda DESCONOCIDA y se avisa;
   las comisiones se guardan con su moneda real (EUR se convierte en el export,
   otras se avisan) y se alerta de una comisión negativa o de signo invertido.
-- (Segunda auditoría, N5) Un fill de origen `stop_catastrofe` o `liquidación` detiene el
-  bot con alerta crítica: el libro (`/fills`) se pone al día ANTES de planificar, de modo
-  que no se reabre la posición que acaba de cerrar la protección del exchange.
+- (Segunda auditoría, N5) Un fill de origen `stop_catastrofe`, `liquidación` (fillType con
+  "liquidation" o `assignor`) o `desapalancamiento` (`unwindBankrupt`, `unwindCounterparty`)
+  detiene el bot con alerta crítica, y también un fill ajeno (cliOrdId que el bot no envió,
+  según `sent_orders` del estado) en un símbolo gestionado: N5 no depende de que Kraken
+  conserve el cliOrdId `cs-` de un stop disparado. El libro (`/fills`) se pone al día ANTES
+  de planificar, de modo que no se reabre la posición que acaba de cerrar la protección del
+  exchange. La nota queda en el estado (`protective_fills_unreviewed`) y `--reset-halt` exige
+  confirmar que se ha revisado; `--sync-ledger` hace lo mismo (y detiene el bot) si la trae.
 - `export_fiscal`: el resultado se pasa de USD a EUR con el tipo de
   referencia diario del BCE (EUR/USD) en la fecha de cada liquidación,
   indicando la fuente en el fichero. Funding pagado y cobrado en columnas

@@ -49,6 +49,11 @@ ZERO = Decimal(0)
 
 API = "/derivatives/api/v3"
 STOP_PREFIX = "cs-"  # cliOrdId de los stops de catástrofe del bot
+# fillType de /fills que significan que el exchange cerró (parte de) la posición por su cuenta,
+# además de los que contienen "liquidation": cesión en una liquidación y desapalancamiento
+# automático (HIPÓTESIS sobre los valores reales: comprobarlo en la prueba supervisada)
+LIQUIDATION_FILLS = frozenset({"assignor"})
+DELEVERAGING_FILLS = frozenset({"unwindBankrupt", "unwindCounterparty"})
 LIQUIDATION_SAFETY = Decimal("0.8")  # el stop debe saltar antes del 80 % del margen libre
 FUNDING_POLL_SECONDS = 300  # cada cuánto se lee el log de cuenta (funding y comisiones)
 FILLS_PAGE = 100  # /fills devuelve como mucho los 100 últimos; más antiguos, con lastFillTime
@@ -571,9 +576,15 @@ class LiveExchange:
 
     def _fill_row(self, f: Mapping[str, Any], fid: str) -> dict[str, Any] | None:
         cli = str(f.get("cliOrdId") or "")
-        origin = ("liquidación" if "iquidation" in str(f.get("fillType"))
+        fill_type = str(f.get("fillType"))
+        # "bot" solo si el cliOrdId es de una orden que el bot envió (sent_orders): cualquier
+        # otro fill es ajeno ("manual"), también un stop disparado que no conserve el cs-
+        origin = ("liquidación" if "iquidation" in fill_type or fill_type in LIQUIDATION_FILLS
+                  else "desapalancamiento" if fill_type in DELEVERAGING_FILLS
                   else "stop_catastrofe" if cli.startswith(STOP_PREFIX)
-                  else "bot" if cli else "manual")
+                  else "bot" if cli and (cli in self._state.sent_orders
+                                         or cli in self._state.pending_orders)
+                  else "manual")
         try:
             return {
                 "timestamp": _parse_ts(f["fillTime"]),
