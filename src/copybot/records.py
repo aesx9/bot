@@ -1,5 +1,8 @@
 """Registros CSV: trades.csv, funding.csv y equity.csv.
 
+- trades.csv es idempotente por cliOrdId: una orden se registra una sola vez aunque se
+  reconcilie de nuevo tras una caída.
+
 - Timestamps en UTC (ISO 8601). Importes como Decimal en texto exacto.
 - Cada fila lleva el modo (paper/live): los informes fiscales excluyen paper.
 - funding.csv separa pagado y cobrado (tratamiento fiscal distinto en España).
@@ -78,6 +81,19 @@ def _fmt(v: object) -> str:
 class CsvRecorder:
     def __init__(self, directory: Path) -> None:
         self.dir = directory
+        self._trade_ids: set[str] | None = None  # cliOrdId ya registrados en trades.csv
+
+    def _known_trades(self) -> set[str]:
+        """Órdenes ya escritas (se lee el fichero una vez): tras una caída entre escribir
+        la fila y guardar el estado, la reconciliación vuelve a ver esa orden y la
+        registraría dos veces."""
+        if self._trade_ids is None:
+            self._trade_ids = set()
+            path = self.dir / "trades.csv"
+            if path.exists():
+                with path.open(newline="", encoding="utf-8") as fh:
+                    self._trade_ids = {r.get("cli_ord_id", "") for r in csv.DictReader(fh)}
+        return self._trade_ids
 
     def _append(self, name: str, header: tuple[str, ...], row: tuple[object, ...]) -> None:
         self.dir.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -96,11 +112,15 @@ class CsvRecorder:
             os.close(fd)
 
     def trade(self, r: TradeRecord) -> None:
+        known = self._known_trades()
+        if r.cli_ord_id in known:
+            return  # idempotente por cliOrdId
         self._append("trades.csv", TRADES_HEADER, (
             r.timestamp, r.mode, r.symbol, r.action, r.side, r.size, r.reduce_only,
             r.leader_price, r.ref_price, r.fill_price, r.slippage_bps, r.fee_usd,
             r.delay_seconds, r.cli_ord_id, r.status,
         ))
+        known.add(r.cli_ord_id)
 
     def funding(self, e: FundingEvent, mode: str) -> None:
         paid = -e.amount_usd if e.amount_usd < 0 else Decimal(0)

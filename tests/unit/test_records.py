@@ -24,8 +24,8 @@ def test_slippage_sign_is_cost() -> None:
 
 def test_csv_files_header_once_private_and_utc(tmp_path: Path) -> None:
     rec = CsvRecorder(tmp_path)
-    rec.trade(trade("buy", "100.5"))
-    rec.trade(trade("sell", "99"))
+    rec.trade(trade("buy", "100.5", cli="a"))
+    rec.trade(trade("sell", "99", cli="b"))
     path = tmp_path / "trades.csv"
     rows = list(csv.reader(path.open()))
     assert tuple(rows[0]) == TRADES_HEADER and len(rows) == 3
@@ -56,3 +56,14 @@ def test_decimals_are_written_without_scientific_notation(tmp_path: Path) -> Non
     CsvRecorder(tmp_path).trade(rec)
     row = list(csv.DictReader((tmp_path / "trades.csv").open()))[0]
     assert (row["tamano"], row["precio_referencia"]) == ("5000", "0.0000009")
+
+
+def test_trade_rows_are_idempotent_by_client_order_id(tmp_path: Path) -> None:
+    """B8: una caída entre escribir la fila y guardar el estado duplicaba la operación."""
+    rec = CsvRecorder(tmp_path)
+    rec.trade(trade("buy", "100", cli="a"))
+    rec.trade(trade("buy", "100", cli="a"))
+    CsvRecorder(tmp_path).trade(trade("buy", "100", cli="a"))  # proceso reiniciado
+    CsvRecorder(tmp_path).trade(trade("sell", "99", cli="b"))
+    rows = list(csv.DictReader((tmp_path / "trades.csv").open()))
+    assert [r["cli_ord_id"] for r in rows] == ["a", "b"]

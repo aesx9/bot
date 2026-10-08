@@ -319,3 +319,18 @@ async def test_oserror_after_the_order_reached_the_exchange_is_reconciled(tmp_pa
     [r] = await run(execu, market, [act(ActionKind.OPEN, Side.BUY, "2")])
     assert r.status is OrderStatus.FILLED and len(ex.sent) == 1  # no se reenvió
     assert await ex.positions() == {SOL: D(2)} and state.pending_orders == {}
+
+
+async def test_crash_between_csv_row_and_state_save_does_not_duplicate_the_trade(
+    tmp_path: Path,
+) -> None:
+    """B8: la orden consta en trades.csv pero el estado aún la tenía como pendiente."""
+    execu, ex, state, _, market, _ = setup(tmp_path)
+    [r] = await run(execu, market, [act(ActionKind.OPEN, Side.BUY, "2")])
+    assert len(trades(tmp_path)) == 1
+    state.pending_orders[r.cli_ord_id] = {  # lo que el estado en disco conservaba
+        "symbol": SOL, "side": "buy", "size": "2", "limit_price": "100.5", "reduce_only": False,
+        "ref_price": "100", "action": "open", "leader_price": None, "leader_time": None,
+        "mode": "paper", "created_at": NOW.isoformat()}
+    await execu.reconcile_pending()
+    assert state.pending_orders == {} and len(trades(tmp_path)) == 1
