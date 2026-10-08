@@ -56,7 +56,7 @@
 | M1 | Media | Tamaños y precios en notación científica en `sendorder` | formato | resuelto (`b5fc7d0`) |
 | M2 | Media | Stops de catástrofe: tarde, reemplazo no atómico, sobreviven al cierre | G, G2, L | resuelto (`29da910`) |
 | M3 | Media | Libro fiscal sin deduplicación ni conciliación | D | resuelto (`0329124`) |
-| M4 | Media | Moneda y signo de funding y comisiones sin verificar | (lectura) | pendiente |
+| M4 | Media | Moneda y signo de funding y comisiones sin verificar | (lectura) | resuelto (`60f3637`) |
 | M5 | Media | Puerta `--check` mal invalidada y sin revalidar permisos | M | resuelto (`8c87bfd`) |
 | M6 | Media | "SSH solo con clave" puede no aplicarse | (OpenSSH) | resuelto (`70deb3f`) |
 | M7 | Media | `copybot-cli --status` falla con el servicio activo | (tests) | resuelto (`454058d`) |
@@ -185,12 +185,13 @@ conciliación del neto de fills con las posiciones.
 - **Regresión:** tests/integration/test_live_ledger.py (12: paginación de /fills y del account-log, mismo milisegundo, escritura antes del cursor, idempotencia de los CSV) y tests/unit/test_fiscal.py::test_duplicated_fill_rows_are_counted_once, ::test_duplicated_fee_and_funding_rows_are_counted_once, ::test_reconciliation_*
 
 ### M4 — Moneda y signo sin verificar
-**Gravedad:** media · **Estado:** pendiente
+**Gravedad:** media · **Estado:** resuelto en `60f3637`
 
 El funding se calcula como `new_balance − old_balance` y se etiqueta USD sin
 comprobar `asset`; el signo de `fee` no se verifica; `report.py` ignora
 comisiones en EUR. Corrección: exigir `asset=usd` (o convertir) y alertar; verificar
 el signo de `fee` como el del funding; no ignorar EUR.
+- **Regresión:** tests/integration/test_live_ledger.py::test_funding_in_another_currency_is_not_recorded_as_usd, ::test_fee_currency_is_recorded_and_never_assumed_usd, ::test_negative_or_inverted_fee_sign_alerts_and_the_value_is_kept; tests/unit/test_fiscal.py::test_fees_without_currency_or_in_other_currencies_are_not_counted_as_usd; tests/unit/test_report.py::test_live_report_does_not_ignore_eur_fees_nor_assume_usd
 
 ### M5 — Puerta `--check`
 **Gravedad:** media · **Estado:** resuelto en `8c87bfd`
