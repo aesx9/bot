@@ -289,3 +289,40 @@ async def test_full_live_cycle_with_startup_profile_and_stops(env: Env, tmp_path
     assert stop["side"] == "sell" and stop["unfilledSize"] == str(pos[SOL])
     assert (await engine.cycle()).outcome is Outcome.OK  # idempotente: nada nuevo
     assert len(env.kraken.sends("ioc")) == 1 and len(env.kraken.sends("stp")) == 1
+
+
+# --- A1: respuestas malformadas = ExchangeError, nunca una excepción suelta ---
+
+
+async def test_malformed_account_log_entries_are_skipped_with_an_alert(env: Env) -> None:
+    start = int(NOW.timestamp() * 1000)
+    await env.live.collect_funding(NOW)
+    ok = log_entry(start + 3000, "100", "99.5")
+    env.kraken.logs = [
+        {"_ms": start + 1000, "info": "funding rate change", "contract": "pf_xbtusd"},  # sin date
+        {"_ms": start + 2000, "info": "funding rate change", "date": "no-es-fecha"},
+        ok,
+    ]
+    events = await env.live.collect_funding(NOW + timedelta(minutes=6))
+    assert [e.amount_usd for e in events] == [D("-0.5")]
+    alerts = env.live.drain_alerts()
+    assert len(alerts) == 2 and all("account-log" in a for a in alerts)
+    # el cursor avanzó más allá de las entradas ilegibles: no se atasca
+    assert env.state.live_funding_cursor_ms is not None
+    assert env.state.live_funding_cursor_ms > start + 3000
+
+
+@pytest.mark.parametrize("breakage", ["no_symbol", "accounts_list", "fills_not_list"])
+async def test_malformed_payloads_raise_exchange_error(env: Env, breakage: str) -> None:
+    if breakage == "no_symbol":
+        env.kraken.positions = [{"side": "long", "size": "1", "price": "1"}]
+        with pytest.raises(ExchangeError):
+            await env.live.positions()
+    elif breakage == "accounts_list":
+        env.kraken.flex = []  # type: ignore[assignment]
+        with pytest.raises(ExchangeError):
+            await env.live.equity_usd()
+    else:
+        env.kraken.fills = {"x": 1}  # type: ignore[assignment]
+        with pytest.raises(ExchangeError):
+            await env.live.find_order("c1")

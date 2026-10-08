@@ -41,7 +41,7 @@ from copybot.credentials import (
     load_kraken_credentials,
     load_telegram_credentials,
 )
-from copybot.engine import CycleReport, Engine, Outcome
+from copybot.engine import CycleReport, Engine, LoopTaskDied, Outcome
 from copybot.exchange.base import Exchange
 from copybot.exchange.kraken_auth import KrakenPrivateClient
 from copybot.exchange.kraken_public import KrakenMarketData
@@ -179,7 +179,18 @@ async def run_bot(
                     **callbacks,  # type: ignore[arg-type]
                 )
 
-            report = await engine.run_forever(stream_factory)
+            try:
+                report = await engine.run_forever(stream_factory)
+            except LoopTaskDied as exc:
+                # Salida con error: systemd reinicia el proceso (la confirmación live sigue
+                # vigente) en vez de dejarlo "vivo" sin operar.
+                log.critical("bucle principal roto: %s", exc)
+                try:
+                    store.save(state)
+                    await alerter.alert(Level.CRITICAL, f"bucle principal roto, se reinicia: {exc}")
+                except Exception:
+                    log.exception("no se pudo guardar el estado o avisar tras romperse el bucle")
+                return EXIT_ERROR
         store.save(state)
         if report is not None and report.outcome is Outcome.HALTED:
             await alerter.alert(Level.CRITICAL, f"bot parado: {state.halt_reason}")

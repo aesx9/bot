@@ -283,3 +283,21 @@ async def test_debounce_close_cancels_pending_cycle() -> None:
     await d.aclose()
     await asyncio.sleep(0.07)
     assert not called and not d.pending
+
+
+async def test_unexpected_callback_failure_reconnects_instead_of_killing_the_stream() -> None:
+    """A1 (PoC B): un fallo inesperado en un callback no puede matar la tarea del stream."""
+    h = Harness(FakeConn([ACK, SNAPSHOT]), FakeConn([ACK, SNAPSHOT, STREAM]))
+    calls = {"n": 0}
+    original = h._on_connected
+
+    async def flaky(reconnect: bool) -> None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise KeyError("fallo inesperado en el callback")
+        await original(reconnect)
+
+    h.stream._on_connected = flaky  # type: ignore[assignment]
+    await h.run()
+    assert h.connected == [True]  # la segunda sesión se estableció: el stream siguió vivo
+    assert len(h.fills) == 1

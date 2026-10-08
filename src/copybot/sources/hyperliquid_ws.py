@@ -164,6 +164,11 @@ class UserFillsStream:
                 if self._stopping.is_set():
                     break
                 log.warning("WebSocket de Hyperliquid caído: %s", _describe(exc))
+            except Exception:
+                # Un fallo inesperado (p. ej. en un callback) no puede matar el stream
+                if self._stopping.is_set():
+                    break
+                log.exception("fallo inesperado en el WebSocket de Hyperliquid: se reconecta")
             finally:
                 if self._conn is not None:
                     with contextlib.suppress(Exception):

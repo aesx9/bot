@@ -65,6 +65,10 @@ CYCLE_ERRORS = (
 )
 
 
+class LoopTaskDied(RuntimeError):
+    """Una de las tareas del bucle principal terminó sin que el bot estuviera detenido."""
+
+
 class Outcome(StrEnum):
     OK = "ok"
     SKIPPED = "skipped"  # sanity: no se opera este ciclo
@@ -139,16 +143,29 @@ class Engine:
         self._mapper_markets: set[str] = set()
         self._lock = asyncio.Lock()
         self.last_report: CycleReport | None = None
+        self.last_cycle_at: datetime | None = None
 
     # --- utilidades ---
 
     def _save(self) -> None:
         self._store.save(self.state)
 
+    async def _best_effort(self, level: Level | None = None, text: str = "") -> None:
+        """Guardar el estado y avisar al tratar un error: si esto falla (disco lleno, URL
+        de Telegram rota) no puede convertirse en otro fallo del ciclo."""
+        try:
+            self._save()
+        except Exception:
+            log.exception("no se pudo guardar el estado")
+        if level is not None:
+            try:
+                await self._alert.alert(level, text)
+            except Exception:
+                log.exception("no se pudo enviar la alerta")
+
     async def _halt(self, reason: str) -> CycleReport:
         halt(self.state, reason, self._now())
-        self._save()
-        await self._alert.alert(Level.CRITICAL, f"bot detenido: {reason}")
+        await self._best_effort(Level.CRITICAL, f"bot detenido: {reason}")
         return CycleReport(Outcome.HALTED, reason)
 
     def _mapper_for(self, markets: dict[str, MarketSpec]) -> SymbolMapper:
@@ -162,10 +179,28 @@ class Engine:
     async def cycle(self, trigger: str = "rest", leader_time: datetime | None = None
                     ) -> CycleReport:
         async with self._lock:
-            report = await self._cycle(trigger, leader_time)
+            try:
+                report = await self._cycle(trigger, leader_time)
+            except Exception as exc:  # el bucle principal no puede morir por un fallo del ciclo
+                report = await self._last_resort(exc)
             self.last_report = report
+            self.last_cycle_at = self._now()
             log.info("ciclo (%s): %s %s", trigger, report.outcome.value, report.detail)
             return report
+
+    async def _last_resort(self, exc: Exception) -> CycleReport:
+        """Un fallo dentro del propio tratamiento de errores (guardar el estado, alertar):
+        se cuenta como ciclo con error y, al llegar al límite, se detiene en memoria."""
+        detail = f"{type(exc).__name__}: {exc}"
+        log.exception("fallo no tratado en el ciclo")
+        try:
+            if record_cycle_error(self.state, self.cfg.risk):
+                reason = f"{self.state.consecutive_errors} ciclos seguidos con error ({detail})"
+                halt(self.state, reason, self._now())
+                return CycleReport(Outcome.HALTED, reason)
+        except Exception:
+            log.exception("no se pudo registrar el error del ciclo")
+        return CycleReport(Outcome.ERROR, detail)
 
     async def _cycle(self, trigger: str, leader_time: datetime | None) -> CycleReport:
         stop = kill_switch_active(self._kill_dirs)
@@ -178,14 +213,15 @@ class Engine:
             return await self._trade(leader_time)
         except (CircuitBreakerTripped, limits.HardLimitViolation) as exc:
             return await self._halt(str(exc))
-        except CYCLE_ERRORS as exc:
+        except Exception as exc:
+            if not isinstance(exc, CYCLE_ERRORS):
+                log.exception("excepción no prevista en el ciclo")
             detail = f"{type(exc).__name__}: {exc}"
             if record_cycle_error(self.state, self.cfg.risk):
                 return await self._halt(
                     f"{self.state.consecutive_errors} ciclos seguidos con error ({detail})"
                 )
-            self._save()
-            await self._alert.alert(Level.WARNING, f"ciclo con error: {detail}")
+            await self._best_effort(Level.WARNING, f"ciclo con error: {detail}")
             return CycleReport(Outcome.ERROR, detail)
 
     async def _trade(self, leader_time: datetime | None) -> CycleReport:
@@ -453,15 +489,26 @@ class Engine:
                          r.outcome.value if r else "-", sorted(self.state.managed_symbols),
                          self.state.consecutive_errors)
 
-        tasks = [asyncio.create_task(stream.run()),
-                 asyncio.create_task(reconcile_loop()),
-                 asyncio.create_task(heartbeat())]
+        tasks = [asyncio.create_task(stream.run(), name="websocket"),
+                 asyncio.create_task(reconcile_loop(), name="reconciliación"),
+                 asyncio.create_task(heartbeat(), name="heartbeat")]
+        stop_wait = asyncio.create_task(stopped.wait())
         try:
-            await stopped.wait()
+            # Ninguna de las tres tareas debe terminar sola: si una muere (un fallo
+            # que el ciclo no cubrió), el proceso sale con error en vez de quedarse
+            # "vivo" sin operar.
+            done, _ = await asyncio.wait({stop_wait, *tasks}, return_when=asyncio.FIRST_COMPLETED)
+            dead = [t for t in done if t is not stop_wait]
+            if dead and not stopped.is_set():
+                for t in dead:
+                    if not t.cancelled() and t.exception() is not None:
+                        log.error("la tarea %s murió", t.get_name(), exc_info=t.exception())
+                names = ", ".join(t.get_name() for t in dead)
+                raise LoopTaskDied(f"terminó la tarea {names} sin que el bot estuviera detenido")
         finally:
             await stream.stop()
             await debouncer.aclose()
-            for t in tasks:
+            for t in (stop_wait, *tasks):
                 t.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await asyncio.gather(stop_wait, *tasks, return_exceptions=True)
         return self.last_report

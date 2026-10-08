@@ -23,9 +23,10 @@ trades.csv (el export fiscal la tomará del log de cuenta de Kraken).
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from datetime import UTC, datetime
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from typing import Any
@@ -65,6 +66,18 @@ def _dec(v: Any, what: str) -> Decimal:
     return d
 
 
+@contextlib.contextmanager
+def malformed(what: str) -> Iterator[None]:
+    """Una respuesta con otra forma de la esperada es un error del exchange (ExchangeError),
+    nunca una excepción suelta que se escape de los controles de ciclo."""
+    try:
+        yield
+    except ExchangeError:
+        raise
+    except (KeyError, TypeError, AttributeError, ValueError, ArithmeticError, IndexError) as exc:
+        raise ExchangeError(f"{what}: respuesta malformada ({type(exc).__name__})") from None
+
+
 def _executions(events: Any) -> tuple[Decimal, Decimal | None]:
     filled = notional = ZERO
     for e in events or []:
@@ -98,7 +111,8 @@ class LiveExchange:
 
     async def _flex(self) -> dict[str, Any]:
         payload = await self._c.request("GET", f"{API}/accounts")
-        flex = (payload.get("accounts") or {}).get("flex")
+        accounts = payload.get("accounts") or {}
+        flex = accounts.get("flex") if isinstance(accounts, dict) else None
         if not isinstance(flex, dict):
             raise ExchangeError("accounts: falta la cuenta multi-colateral (flex)")
         return flex
@@ -115,18 +129,19 @@ class LiveExchange:
     async def _open_positions(self) -> list[dict[str, Any]]:
         payload = await self._c.request("GET", f"{API}/openpositions")
         rows = payload.get("openPositions")
-        if not isinstance(rows, list):
+        if not isinstance(rows, list) or not all(isinstance(r, dict) for r in rows):
             raise ExchangeError("openpositions: falta la lista")
         return rows
 
     async def positions(self) -> dict[str, Decimal]:
         out: dict[str, Decimal] = {}
         for p in await self._open_positions():
-            size = _dec(p.get("size"), "posición")
-            if p.get("side") not in ("long", "short"):
-                raise ExchangeError("openpositions: lado desconocido")
-            if size:
-                out[str(p["symbol"]).upper()] = size if p["side"] == "long" else -size
+            with malformed("openpositions"):
+                size = _dec(p.get("size"), "posición")
+                if p.get("side") not in ("long", "short"):
+                    raise ExchangeError("openpositions: lado desconocido")
+                if size:
+                    out[str(p["symbol"]).upper()] = size if p["side"] == "long" else -size
         self._positions = dict(out)
         return out
 
@@ -142,6 +157,10 @@ class LiveExchange:
     # --- órdenes ---
 
     async def send_order(self, req: OrderRequest) -> OrderResult:
+        with malformed("sendorder"):
+            return await self._send_order(req)
+
+    async def _send_order(self, req: OrderRequest) -> OrderResult:
         payload = await self._c.request("POST", f"{API}/sendorder", [
             ("orderType", "ioc"), ("symbol", req.symbol), ("side", req.side.value),
             ("size", str(req.size)), ("limitPrice", str(req.limit_price)),
@@ -163,9 +182,15 @@ class LiveExchange:
         return OrderResult(req.cli_ord_id, OrderStatus.REJECTED, ZERO, None, ZERO, status)
 
     async def find_order(self, cli_ord_id: str) -> OrderResult | None:
+        with malformed("find_order"):
+            return await self._find_order(cli_ord_id)
+
+    async def _find_order(self, cli_ord_id: str) -> OrderResult | None:
         payload = await self._c.request("GET", f"{API}/fills")
-        fills = [f for f in payload.get("fills") or []
-                 if isinstance(f, dict) and f.get("cliOrdId") == cli_ord_id]
+        all_fills = payload.get("fills") or []
+        if not isinstance(all_fills, list):
+            raise ExchangeError("fills: se esperaba una lista")
+        fills = [f for f in all_fills if isinstance(f, dict) and f.get("cliOrdId") == cli_ord_id]
         if fills:
             filled = sum((_dec(f.get("size"), "fill") for f in fills), ZERO)
             notional = sum((_dec(f.get("size"), "fill") * _dec(f.get("price"), "fill")
@@ -205,21 +230,36 @@ class LiveExchange:
             ("info", "funding rate change"), ("info", "futures trade"),
             ("info", "futures liquidation"), ("info", "futures partial liquidation"),
         ])
+        logs = payload.get("logs") or []
+        if not isinstance(logs, list):
+            raise ExchangeError("account-log: se esperaba una lista")
         events: list[FundingEvent] = []
-        for e in payload.get("logs") or []:
+        for e in logs:
             if not isinstance(e, dict):
                 continue
-            ts = datetime.fromisoformat(str(e["date"]).replace("Z", "+00:00"))
-            cursor = max(cursor, int(ts.timestamp() * 1000) + 1)
-            symbol = str(e.get("contract") or "").upper()
-            if e.get("info") == "funding rate change":
-                events.append(self._funding_event(e, ts, symbol))
-            elif e.get("fee") is not None:
-                self.ledger_fees.append({
-                    "timestamp": ts, "symbol": symbol, "fee": _dec(e["fee"], "comisión"),
-                    "currency": str(e.get("collateral") or e.get("asset") or "").upper(),
-                    "info": str(e.get("info")), "booking_uid": str(e.get("booking_uid") or ""),
-                })
+            try:
+                ts = datetime.fromisoformat(str(e["date"]).replace("Z", "+00:00"))
+                if ts.tzinfo is None:
+                    raise ValueError("fecha sin zona horaria")
+                cursor = max(cursor, int(ts.timestamp() * 1000) + 1)
+                symbol = str(e.get("contract") or "").upper()
+                if e.get("info") == "funding rate change":
+                    events.append(self._funding_event(e, ts, symbol))
+                elif e.get("fee") is not None:
+                    self.ledger_fees.append({
+                        "timestamp": ts, "symbol": symbol, "fee": _dec(e["fee"], "comisión"),
+                        "currency": str(e.get("collateral") or e.get("asset") or "").upper(),
+                        "info": str(e.get("info")), "booking_uid": str(e.get("booking_uid") or ""),
+                    })
+            except (KeyError, TypeError, AttributeError, ValueError, ArithmeticError,
+                    ExchangeError) as exc:
+                # Se salta esa entrada (si no, el cursor no avanzaría nunca) y se avisa:
+                # el libro fiscal tendría un hueco que hay que revisar a mano.
+                self.alerts.append(
+                    f"account-log: entrada ilegible ({type(exc).__name__}) "
+                    f"[date={e.get('date')!r}, info={e.get('info')!r}, "
+                    f"booking_uid={e.get('booking_uid')!r}]: no se importa; revísala a mano"
+                )
         self._state.live_funding_cursor_ms = cursor
         return events
 
@@ -261,27 +301,41 @@ class LiveExchange:
         first_run = self._state.live_funding_cursor_ms is None
         seen = set(self._state.fills_seen)
         new_ids: list[str] = []
-        rows = sorted((f for f in payload.get("fills") or [] if isinstance(f, dict)),
+        fills = payload.get("fills") or []
+        if not isinstance(fills, list):
+            raise ExchangeError("fills: se esperaba una lista")
+        rows = sorted((f for f in fills if isinstance(f, dict)),
                       key=lambda f: str(f.get("fillTime")))
         for f in rows:
             fid = str(f.get("fill_id") or "")
             if not fid or fid in seen:
                 continue
-            seen.add(fid)
-            new_ids.append(fid)
             if first_run:  # fills anteriores al primer arranque live: no son del bot
+                seen.add(fid)
+                new_ids.append(fid)
                 continue
             cli = str(f.get("cliOrdId") or "")
             origin = ("liquidación" if "iquidation" in str(f.get("fillType"))
                       else "stop_catastrofe" if cli.startswith(STOP_PREFIX)
                       else "bot" if cli else "manual")
-            self.ledger_fills.append({
-                "timestamp": datetime.fromisoformat(str(f["fillTime"]).replace("Z", "+00:00")),
-                "symbol": str(f.get("symbol")).upper(), "side": str(f.get("side")),
-                "size": _dec(f.get("size"), "fill"), "price": _dec(f.get("price"), "fill"),
-                "fill_type": str(f.get("fillType")), "cli_ord_id": cli, "fill_id": fid,
-                "order_id": str(f.get("order_id") or ""), "origin": origin,
-            })
+            try:
+                row = {
+                    "timestamp": datetime.fromisoformat(
+                        str(f["fillTime"]).replace("Z", "+00:00")),
+                    "symbol": str(f.get("symbol")).upper(), "side": str(f.get("side")),
+                    "size": _dec(f.get("size"), "fill"), "price": _dec(f.get("price"), "fill"),
+                    "fill_type": str(f.get("fillType")), "cli_ord_id": cli, "fill_id": fid,
+                    "order_id": str(f.get("order_id") or ""), "origin": origin,
+                }
+            except (KeyError, TypeError, AttributeError, ValueError, ArithmeticError,
+                    ExchangeError) as exc:
+                self.alerts.append(
+                    f"fills: fill ilegible ({type(exc).__name__}) [fill_id={fid!r}]: no se "
+                    "importa al libro fiscal; revísalo a mano")
+                continue  # sin marcarlo como visto: se reintenta en el siguiente sondeo
+            seen.add(fid)
+            new_ids.append(fid)
+            self.ledger_fills.append(row)
         # /fills solo devuelve los 100 últimos: basta con recordar algo más que eso
         self._state.fills_seen = (self._state.fills_seen + new_ids)[-500:]
 
@@ -292,6 +346,12 @@ class LiveExchange:
     ) -> list[str]:
         """Un stop reduceOnly (a mercado al saltar, señal mark) por posición gestionada,
         a `pct` % del precio de entrada y siempre antes de la liquidación estimada."""
+        with malformed("stops de catástrofe"):
+            return await self._sync_catastrophe_stops(managed, markets, pct)
+
+    async def _sync_catastrophe_stops(
+        self, managed: Mapping[str, Decimal], markets: Mapping[str, MarketSpec], pct: Decimal
+    ) -> list[str]:
         warnings: list[str] = []
         entries = {str(p["symbol"]).upper(): _dec(p.get("price"), "entrada")
                    for p in await self._open_positions()}
