@@ -36,7 +36,7 @@
 
 | ID | Gravedad | Hallazgo | PoC | Estado |
 |---|---|---|---|---|
-| A1 | Alta | Una excepción no prevista mata el bucle y el bot sigue "vivo" sin operar | B, C | pendiente |
+| A1 | Alta | Una excepción no prevista mata el bucle y el bot sigue "vivo" sin operar | B, C | resuelto (`fbbc0f8`) |
 | A2 | Alta | Posiciones huérfanas si el ciclo se aborta a mitad de ejecución | J, J2 | pendiente |
 | A3 | Alta | Estado compartido entre paper y live | E | pendiente |
 | A4 | Alta | Los fills del primer ciclo live no entran en el libro fiscal | A | pendiente |
@@ -73,7 +73,7 @@ la pérdida; las altas debilitan justo las redes de seguridad.
 ## Altas
 
 ### A1 — Una excepción no prevista mata el bucle en silencio
-**Gravedad:** alta · **Estado:** pendiente
+**Gravedad:** alta · **Estado:** resuelto en `fbbc0f8`
 
 - **Dónde:** `engine.py` (`CYCLE_ERRORS`, `reconcile_loop`, `run_forever`),
   `hyperliquid_ws.py` (`run`), `live.py` (parseo del `account-log`).
@@ -87,6 +87,7 @@ la pérdida; las altas debilitan justo las redes de seguridad.
 - **Corrección:** capturar `Exception` en el ciclo y contarla como error;
   supervisar las tres tareas y salir con código ≠ 0 si una muere; validar el
   `account-log` dentro de `ExchangeError`.
+- **Regresión:** tests/integration/test_resilience.py; test_hyperliquid_ws.py::test_unexpected_callback_failure_reconnects_instead_of_killing_the_stream; test_live_exchange.py::test_malformed_account_log_entries_are_skipped_with_an_alert y ::test_malformed_payloads_raise_exchange_error
 
 ### A2 — Posiciones huérfanas
 **Gravedad:** alta · **Estado:** pendiente
