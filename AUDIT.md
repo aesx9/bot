@@ -386,7 +386,7 @@ supervisada con dinero real.
 |---|---|---|---|---|
 | N1 | Media | El tope de nocional por hora detiene el bot al copiar un cierre | P4 | resuelto (`c8b33be`) |
 | N2 | Media | Con el bot detenido el libro fiscal no recoge nada (cierres de emergencia, stops) | P3 | pendiente |
-| N3 | Media | Cualquier rechazo del stop nuevo retira el antiguo (regresión de M2) | P2 | pendiente |
+| N3 | Media | Cualquier rechazo del stop nuevo retira el antiguo (regresión de M2) | P2 | resuelto (`ca9285c`) |
 | N4 | Media | El funding que no es USD solo queda en una alerta; el export no lo ve (M4) | P1 | pendiente |
 | N5 | Baja/Media | Tras saltar un stop de catástrofe el bot reabre en el ciclo siguiente | P5 | pendiente |
 | T1 | Baja | Hueco de test de A1: las dos capas de captura se tapan entre sí | mutación | pendiente |
@@ -419,7 +419,7 @@ conciliación dice "cuadra" porque tampoco hay foto posterior. Corrección: actu
 también en ciclos detenidos y tras cada cierre de emergencia, y `--sync-ledger` de solo lectura.
 
 ### N3 — Un rechazo cualquiera del stop nuevo retira el antiguo
-**Gravedad:** media · **Estado:** pendiente
+**Gravedad:** media · **Estado:** resuelto en `ca9285c`
 
 `live.py`, `_sync_catastrophe_stops`: el respaldo "cancelar y recolocar" (pensado para un
 exchange que admite un solo stop por símbolo) se activa con CUALQUIER estado distinto de
@@ -427,6 +427,7 @@ exchange que admite un solo stop por símbolo) se activa con CUALQUIER estado di
 también falla y la posición queda sin protección. Corrección: respaldo solo con el código
 concreto; cualquier otro rechazo mantiene el antiguo y alerta crítica.
 
+- **Regresión:** tests/integration/test_live_exchange.py::test_other_rejections_of_the_new_stop_keep_the_old_one (3 estados)
 ### N4 — Funding en otra moneda: solo una alerta
 **Gravedad:** media · **Estado:** pendiente
 
