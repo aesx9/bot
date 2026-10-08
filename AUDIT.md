@@ -52,7 +52,7 @@
 | M9 | Media | El kill switch puede tardar hasta 1 h | (lectura) | resuelto (`a248c21`) |
 | M10 | Media | Posiciones manuales en mercados del líder se adoptan | E | resuelto (`e8e0274`) |
 | M11 | Media | Sin coherencia de precios HL↔Kraken; `max_position_size` sin usar | (lectura) | resuelto (`f138907`) |
-| M12 | Media | Los topes se aplican al objetivo, no a la exposición real | (lectura) | pendiente |
+| M12 | Media | Los topes se aplican al objetivo, no a la exposición real | (lectura) | resuelto (`66e8f39`) |
 | M13 | Media | Tras un HALT las posiciones quedan con stops laxos | (lectura) | pendiente |
 | M14 | Media | Lagunas de tests (mutaciones supervivientes) | mutación | pendiente |
 | B1 | Baja | `config.toml` no ignorado; pre-commit voluntario; sin CI | (lectura) | pendiente |
@@ -234,11 +234,12 @@ respetar el máximo del mercado.
 - **Regresión:** tests/integration/test_engine.py::test_asset_with_incoherent_price_is_not_traded_and_warns_once, ::test_incoherent_price_leaves_an_existing_position_untouched, ::test_size_factor_makes_a_scaled_asset_coherent; test_planner.py::test_target_is_capped_at_the_market_max_position_size
 
 ### M12 — Topes sobre exposición real
-**Gravedad:** media · **Estado:** pendiente
+**Gravedad:** media · **Estado:** resuelto en `66e8f39`
 
 El ejecutor solo valida el tope por activo (600 USD) en los aumentos; no el total
 ni el perfil de arranque. Corrección: guarda de exposición proyectada antes de
 cada orden no reduceOnly.
+- **Regresión:** tests/unit/test_executor.py::test_increase_above_the_per_asset_cap_is_skipped_not_sent, ::test_open_is_skipped_if_real_positions_already_use_the_total, ::test_reductions_and_closes_are_never_blocked_by_the_guard; test_emergency.py::test_open_is_skipped_while_a_previous_close_has_not_filled
 
 ### M13 — HALT sin cerrar y stops laxos
 **Gravedad:** media · **Estado:** pendiente
