@@ -50,6 +50,7 @@ class InfoApi:
             "clearinghouseState": [fixture("hl_clearinghouse_state.json")],
             "allMids": [fixture("hl_all_mids.json")],
             "userAbstraction": ["default"],
+            "spotClearinghouseState": [{"balances": [{"coin": "USDC", "total": "1.5"}]}],
         }
         self.calls: list[dict[str, Any]] = []
 
@@ -251,3 +252,16 @@ async def test_snapshot_respects_documented_weights(info: HyperliquidInfo, api: 
     for _ in range(50):
         await info.leader_snapshot(USER)
     assert len(t.sleeps) >= 1
+
+
+async def test_raw_states_for_analysis(info: HyperliquidInfo, api: InfoApi) -> None:
+    raw = await info.clearinghouse_raw(USER)
+    assert raw["marginSummary"]["accountValue"] == "3189036.4886340001"
+    spot = await info.spot_state(USER)
+    assert spot["balances"][0]["coin"] == "USDC"
+    api.responses["spotClearinghouseState"] = [{"otra": 1}]
+    with pytest.raises(LeaderDataError):
+        await info.spot_state(USER)
+    api.responses["clearinghouseState"] = [[]]
+    with pytest.raises(LeaderDataError):
+        await info.clearinghouse_raw(USER)

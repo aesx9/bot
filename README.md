@@ -436,21 +436,36 @@ el fichero. Si el BCE no responde, descarga `eurofxref-hist.csv` de la web
 del BCE y pásalo con `--ecb-csv`. Las posiciones aún abiertas no se declaran
 hasta que se cierran (el script avisa). Revisa los ficheros con tu asesor.
 
-**`rank_leaders`**: ranking por Sharpe de los últimos 30 días.
+**`rank_leaders`**: ranking por **consistencia**. La puntuación es el menor de
+los dos Sharpe anualizados, el del último mes (rentabilidades diarias) y el de
+todo el historial: un buen mes aislado no basta.
 
 ```bash
 .venv/bin/python scripts/rank_leaders.py --wallets ~/candidatas.txt --out ~/ranking.csv
 .venv/bin/python scripts/rank_leaders.py --leaderboard --top 30 --out ~/ranking.csv  # NO OFICIAL
 ```
 
+Las rentabilidades y los drawdowns **descuentan depósitos y retiros**
+(Modified Dietz sobre el PnL acumulado de Hyperliquid). Los periodos con muy
+poco capital no se miden; si son demasiados, la wallet se descarta.
+
 Descarta:
 
-- cuentas en unified account o portfolio margin;
-- menos de 30 días de historial;
-- scalpers (más de 40 fills al día) y wallets inactivas (menos de 5 fills
-  en 30 días);
+- cuentas en unified account o portfolio margin (el bot no puede seguirlas;
+  con `--ignore-account-mode` se evalúan igual, **solo para informar**, y la
+  salida las marca como no compatibles);
+- capital en perpetuos por debajo de 10.000 USD (`--min-perp-capital`). Se
+  mide en la cuenta, no con el dato del leaderboard;
+- menos de 90 días de historial (`--min-history-days`);
+- apalancamiento efectivo de más de 10x, ahora o en el percentil 90 de los
+  últimos 30 días (`--max-leverage`);
+- scalpers (más de 40 fills al día) y wallets inactivas (menos de 5 fills en
+  30 días);
 - más de un 10 % del volumen en activos sin mercado en Kraken;
 - más de 8 posiciones simultáneas.
+
+Con `--leaderboard`, las candidatas se preseleccionan entre las que ganan en el
+mes **y** en el total, ordenadas por el peor de sus dos puestos de ROI.
 
 El leaderboard no forma parte de la API documentada de Hyperliquid y puede
 cambiar o desaparecer.
