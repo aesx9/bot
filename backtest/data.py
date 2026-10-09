@@ -14,9 +14,9 @@ Endpoints (verificados en docs.kraken.com):
 from __future__ import annotations
 
 import csv
-import hashlib
 import json
 import math
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -227,35 +227,33 @@ def load_funding(directory: Path, symbol: str) -> FundingSeries:
     return series
 
 
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def download_all(directory: Path, symbols: tuple[str, ...], now_ms: int) -> dict[str, object]:
+def download_all(
+    directory: Path,
+    symbols: tuple[str, ...],
+    now_ms: int,
+    client: httpx.Client | None = None,
+) -> dict[str, object]:
     """Descarga velas y funding de cada símbolo, los guarda y escribe el manifiesto."""
     symbols_info: dict[str, object] = {}
     manifest: dict[str, object] = {"downloaded_at": iso(now_ms), "symbols": symbols_info}
-    with httpx.Client(timeout=60.0) as client:
+    with nullcontext(client) if client is not None else httpx.Client(timeout=60.0) as http:
         for symbol in symbols:
-            candles = fetch_candles(client, symbol, now_ms)
-            funding = fetch_funding(client, symbol)
-            cp = save_candles(directory, candles)
-            fp = save_funding(directory, funding)
-            info = {
+            candles = fetch_candles(http, symbol, now_ms)
+            funding = fetch_funding(http, symbol)
+            save_candles(directory, candles)
+            save_funding(directory, funding)
+            symbols_info[symbol] = {
                 "candles": {
                     "rows": len(candles),
                     "first": iso(candles.t[0]),
                     "last_open": iso(candles.t[-1]),
-                    "sha256": _sha256(cp),
                 },
                 "funding": {
                     "rows": len(funding.t),
                     "first": iso(funding.t[0]),
                     "last": iso(funding.t[-1]),
-                    "sha256": _sha256(fp),
                 },
             }
-            symbols_info[symbol] = info
     (directory / MANIFEST).write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )

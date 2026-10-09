@@ -12,6 +12,7 @@ from backtest.config import CANDLE_MS, HOUR_MS
 from backtest.data import (
     DataError,
     FundingSeries,
+    download_all,
     fetch_candles,
     fetch_funding,
     load_candles,
@@ -100,3 +101,23 @@ def test_fetch_funding_parses_iso_timestamps_and_checks_result() -> None:
     transport = httpx.MockTransport(lambda r: httpx.Response(200, json=bad))
     with httpx.Client(transport=transport) as c, pytest.raises(DataError):
         fetch_funding(c, "PF_X")
+
+
+def test_download_all_saves_files_and_manifest_that_load_back(tmp_path: Path) -> None:
+    funding_body = {"result": "success", "rates": [
+        {"timestamp": "2025-10-06T08:00:00Z", "fundingRate": 1.5, "relativeFundingRate": 1.2e-5},
+    ]}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "historical-funding-rates" in request.url.path:
+            return httpx.Response(200, json=funding_body)
+        return _charts_handler(n_total=6, page=4).handle_request(request)
+
+    now_ms = T0 + 6 * CANDLE_MS
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        manifest = download_all(tmp_path, ("PF_X",), now_ms, client)
+    assert load_candles(tmp_path, "PF_X").t == [T0 + i * CANDLE_MS for i in range(6)]
+    assert load_funding(tmp_path, "PF_X").rate_abs == [1.5]
+    symbols = manifest["symbols"]
+    assert isinstance(symbols, dict) and symbols["PF_X"]["candles"]["rows"] == 6
+    assert (tmp_path / "manifest.json").read_text(encoding="utf-8").endswith("}\n")

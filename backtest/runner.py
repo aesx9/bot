@@ -228,7 +228,7 @@ def evaluate_criteria(r: Results) -> list[Check]:
         tot = reserved.stats[TOTAL]
         checks.append(Check(
             "Neto positivo en el reservado",
-            f"rentabilidad neta {_pct(tot.net_return)} ({tot.net_pnl:+.2f} USD)",
+            f"rentabilidad neta {_pct(tot.net_return)} ({_comma(f'{tot.net_pnl:+.2f}')} USD)",
             tot.net_pnl > 0.0,
         ))
         checks.append(Check(
@@ -261,12 +261,17 @@ def evaluate_criteria(r: Results) -> list[Check]:
         rnd = r.random[RESERVED][sc]
         checks.append(Check(
             "Percentil frente al azar (reservado)",
-            f"percentil {p:.1f} de {rnd.n_sims} simulaciones (mínimo {c.min_percentile:.0f}); "
+            f"percentil {_comma(f'{p:.1f}')} de {rnd.n_sims} simulaciones "
+            f"(mínimo {c.min_percentile:.0f}); "
             f"mediana del azar {_pct(rnd.median)}",
             p >= c.min_percentile,
         ))
     return checks
 
 
+def _comma(text: str) -> str:
+    return text.replace(".", ",")
+
+
 def _pct(x: float) -> str:
-    return "n/d" if math.isnan(x) else f"{x * 100:.2f} %".replace(".", ",")
+    return "n/d" if math.isnan(x) else _comma(f"{x * 100:.2f} %")

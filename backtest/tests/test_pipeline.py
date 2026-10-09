@@ -42,7 +42,9 @@ def test_criteria_are_evaluated_with_the_pessimistic_scenario() -> None:
     assert r.verdict is False
     assert len(r.checks) == 5  # las cinco condiciones de aceptación
     p = r.percentiles[(Scenario.PESIMISTA, RESERVED)]
-    assert f"percentil {p:.1f}" in by_name["Percentil frente al azar (reservado)"].detail
+    assert f"percentil {p:.1f}".replace(".", ",") in by_name[
+        "Percentil frente al azar (reservado)"
+    ].detail
 
 
 @pytest.mark.parametrize(
@@ -124,3 +126,16 @@ def test_every_markdown_table_row_has_the_same_number_of_columns_as_its_header()
         n = len(line.strip().strip("|").split("|"))
         columns = columns or n
         assert n == columns, line
+
+
+def test_real_funding_share_does_not_net_opposite_signs() -> None:
+    from backtest.report import _real_share
+
+    candles, funding = synthetic_dataset(n=1200)
+    r = run_all(candles, funding, n_random=3)
+    trades = r.outcomes[Scenario.PESIMISTA][RESERVED].run.trades
+    assert any(t.funding_real > 0 for t in trades)
+    parts = [_real_share([t for t in trades if t.asset == a]) for a in candles]
+    total = _real_share(trades)
+    values = [float(x.rstrip(" %").replace(",", ".")) for x in (*parts, total)]
+    assert min(values[:-1]) <= values[-1] <= max(values[:-1])  # el total queda entre sus partes

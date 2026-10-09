@@ -244,6 +244,13 @@ def _results(r: Results) -> str:
     return "\n".join(lines)
 
 
+def _real_share(trades: Sequence[Trade]) -> str:
+    """Parte del importe de funding (suma de valores absolutos por operación) que es real."""
+    real = sum(abs(t.funding_real) for t in trades)
+    total = real + sum(abs(t.funding_imputed) for t in trades)
+    return pct(real / total, 1) if total > 0 else "n/d"
+
+
 def _funding_split(r: Results) -> str:
     rows = []
     for name in (DEV, RESERVED):
@@ -257,11 +264,8 @@ def _funding_split(r: Results) -> str:
             share_h = s.funding_hours_real / hours if hours else math.nan
             cells += [pct(outcome.funding_coverage[a], 1), pct(share_h, 1)]
             for sc in (Scenario.PESIMISTA, Scenario.CENTRAL):
-                st = r.outcomes[sc][name].stats[a]
-                total = abs(st.funding_real) + abs(st.funding_imputed)
-                cells.append(
-                    pct(abs(st.funding_real) / total, 1) if total > 0 else "n/d"
-                )
+                trades = [t for t in r.outcomes[sc][name].run.trades if t.asset == a]
+                cells.append(_real_share(trades))
             rows.append(cells)
         outcome = r.outcomes[Scenario.PESIMISTA].get(name)
         if outcome is None:
@@ -272,9 +276,7 @@ def _funding_split(r: Results) -> str:
         cov = sum(outcome.funding_coverage.values()) / len(outcome.funding_coverage)
         cells += [pct(cov, 1), pct(real_h / all_h, 1) if all_h else "n/d"]
         for sc in (Scenario.PESIMISTA, Scenario.CENTRAL):
-            st = r.outcomes[sc][name].stats[TOTAL]
-            total = abs(st.funding_real) + abs(st.funding_imputed)
-            cells.append(pct(abs(st.funding_real) / total, 1) if total > 0 else "n/d")
+            cells.append(_real_share(r.outcomes[sc][name].run.trades))
         rows.append(cells)
     return "\n".join(
         [
@@ -283,8 +285,8 @@ def _funding_split(r: Results) -> str:
             "- *Cobertura del tramo*: % de las horas del tramo con funding real publicado.",
             "- *Horas en posición con dato real*: % de las horas con posición abierta cubiertas "
             "por funding real.",
-            "- *% del coste real*: parte del importe de funding (en valor absoluto) que viene "
-            "de funding real, en cada escenario.",
+            "- *% del coste real*: parte del importe de funding (suma de valores absolutos por "
+            "operación, sin compensar signos) que viene de funding real, en cada escenario.",
             "",
             table(
                 ["Tramo", "Activo", "Cobertura del tramo", "Horas en posición con dato real",

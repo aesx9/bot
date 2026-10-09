@@ -5,42 +5,36 @@
       "candles": {
         "first": "2022-03-23T08:00:00Z",
         "last_open": "2026-10-09T04:00:00Z",
-        "rows": 9966,
-        "sha256": "666ac5fb8196dbdc1af94ae434d2a1a5775ea326ae3a03a4134c6dd3c565ed3b"
+        "rows": 9966
       },
       "funding": {
         "first": "2025-10-06T08:00:00Z",
         "last": "2026-10-09T09:00:00Z",
-        "rows": 8826,
-        "sha256": "259b28a4523fc3339960542fc5239659932680f18dc16b62a392726d0c3e9a3d"
+        "rows": 8826
       }
     },
     "PF_SOLUSD": {
       "candles": {
         "first": "2022-03-23T08:00:00Z",
         "last_open": "2026-10-09T04:00:00Z",
-        "rows": 9966,
-        "sha256": "7066c54689773bb76dd744d85f68762aa4065cb41aed193a42e5465e9f1fe97f"
+        "rows": 9966
       },
       "funding": {
         "first": "2025-10-06T08:00:00Z",
         "last": "2026-10-09T09:00:00Z",
-        "rows": 8827,
-        "sha256": "2c9c509d637dadd769d88a9afba01a8d210c11b941fea394f39d49250b98426c"
+        "rows": 8827
       }
     },
     "PF_XBTUSD": {
       "candles": {
         "first": "2022-03-23T08:00:00Z",
         "last_open": "2026-10-09T04:00:00Z",
-        "rows": 9966,
-        "sha256": "617444848d8e81f46503b44369b56f4b9eab456bcca00c135d8a1c24dea9348e"
+        "rows": 9966
       },
       "funding": {
         "first": "2025-10-06T08:00:00Z",
         "last": "2026-10-09T09:00:00Z",
-        "rows": 8826,
-        "sha256": "b5417b1ed0a92c079ce74d392074ba53cdf90f4bf505e05025dce7aa820260e1"
+        "rows": 8826
       }
     }
   }
