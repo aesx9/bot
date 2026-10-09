@@ -449,3 +449,10 @@ perpetuos y métricas absurdas. Cambios pedidos por el usuario:
   preselección del leaderboard exige ganancia en el mes y en el total.
 - `--ignore-account-mode`: solo informativo. El bot sigue sin soportar unified
   account ni portfolio margin.
+- **Volumen mínimo en perpetuos** (añadido después): al menos un 50 % del
+  volumen de 30 días en perpetuos (`--min-perp-volume-pct`). Un trader de spot
+  pasaba el filtro de mercados en Kraken porque ese filtro solo mira perpetuos.
+- **Unified / portfolio margin, rendimiento solo de perpetuos** (añadido
+  después): numerador = PnL de perpetuos (series perpMonth / perpAllTime, que
+  traen capital 0 pero sí PnL); base y flujos = cuenta total (month /
+  allTime). Antes la ganancia del spot inflaba la rentabilidad.

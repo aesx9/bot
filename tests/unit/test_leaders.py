@@ -22,6 +22,7 @@ from copybot.analysis.leaders import (
     max_drawdown_pct,
     parse_leaderboard,
     percentile,
+    pnl_at,
     points,
     ranked,
     read_wallets,
@@ -71,13 +72,14 @@ class FakeInfo:
                  capital: float = 50000, n_fills: int = 60, coins: tuple[str, ...] = ("BTC",),
                  positions: list[tuple[str, str, str]] | None = None,
                  fills: list[dict[str, Any]] | None = None, month_flows: dict[int, float]
-                 | None = None) -> None:
+                 | None = None, perp_pnl: list[float] | None = None) -> None:
         self.mode, self.age, self.capital = mode, age_days, capital
         self.month_pnl = month_pnl if month_pnl is not None else [500, -200, 300, 100, -50]
         self.total_pnl = total_pnl if total_pnl is not None else [2000, -800, 1500, 300]
         self.n_fills, self.coins, self.month_flows = n_fills, coins, month_flows
         self.positions = positions if positions is not None else [("BTC", "0.5", "40000")]
         self.fills = fills
+        self.perp_pnl = perp_pnl  # unified: PnL de perpetuos (si no, el mismo que el total)
 
     async def user_abstraction(self, user: str) -> str:
         return self.mode
@@ -98,9 +100,12 @@ class FakeInfo:
         total = history(self.age, 7 * 24, self.total_pnl, self.capital)
         if self.mode in STANDARD_MODES:
             return {"perpMonth": month, "perpAllTime": total, "month": month, "allTime": total}
-        empty = {k: [[t, "0.0"] for t, _ in v] if k == "accountValueHistory" else v
-                 for k, v in month.items()}
-        return {"perpMonth": empty, "perpAllTime": empty, "month": month, "allTime": total}
+        # unified: las series perp* traen capital 0 y solo el PnL de perpetuos
+        perp_m = history(30, 16, self.perp_pnl or self.month_pnl, 0)
+        perp_t = history(self.age, 7 * 24, self.perp_pnl or self.total_pnl, 0)
+        for h in (perp_m, perp_t):
+            h["accountValueHistory"] = [[t, "0.0"] for t, _ in h["accountValueHistory"]]
+        return {"perpMonth": perp_m, "perpAllTime": perp_t, "month": month, "allTime": total}
 
     async def user_fills_by_time(self, user: str, start_ms: int) -> list[dict[str, Any]]:
         if self.fills is not None:
@@ -175,6 +180,25 @@ def test_real_unified_portfolio_has_no_perp_capital() -> None:
     assert len(total.returns) >= 25 and total.skipped == 0
 
 
+def test_unified_returns_use_perp_pnl_on_total_capital() -> None:
+    total = pts((10000, 0), (11000, 1000), (16000, 1000), (16800, 1800))  # +5000 depósito
+    perp = [(0, D(0), D(0)), (DAY_MS, D(0), D(-200)), (3 * DAY_MS, D(0), D(300))]
+    s = flow_adjusted_returns(total, D(1000), perp)
+    # PnL de perpetuos por periodo: -200, 0 (sin punto nuevo), +500; base = cuenta total
+    assert s.returns == [D(-200) / 10000, D(0), D(500) / 16000]
+    assert pnl_at(perp, 2 * DAY_MS) == D(-200) and pnl_at(perp, -1) == D(0)
+
+
+def test_real_unified_total_return_comes_from_spot_not_perps() -> None:
+    port = dict(fixture("hl_portfolio_unified.json"))
+    total, perp = points(port["allTime"]), points(port["perpAllTime"])
+    assert perp[-1][2] < 0 < total[-1][2]  # PnL total +9,2 M; de perpetuos -0,7 M
+    whole = flow_adjusted_returns(total, D(1000))
+    perps = flow_adjusted_returns(total, D(1000), perp)
+    assert perps.total_return_pct < whole.total_return_pct
+    assert perps.skipped == whole.skipped  # misma base de capital y mismos flujos
+
+
 def test_collateral_from_real_unified_spot_state() -> None:
     text = collateral_summary(fixture("hl_spot_state_unified.json"), D(0))
     assert text.startswith("USDC 100 %")
@@ -216,6 +240,8 @@ async def test_good_standard_candidate() -> None:
         (FakeInfo(n_fills=1500), "scalper"),
         (FakeInfo(n_fills=2), "inactivo"),
         (FakeInfo(coins=("BTC", "NOEXISTE")), "sin mercado en Kraken"),
+        (FakeInfo(coins=("@107",)), "volumen en perpetuos 0.0 %"),
+        (FakeInfo(coins=("BTC", "@107", "PURR/USDC")), "volumen en perpetuos 33.3 %"),
         (FakeInfo(positions=[(f"C{i}", "1", "100") for i in range(9)]), "posiciones simultáneas"),
         (FakeInfo(positions=[("BTC", "10", "600000")]), "apalancamiento efectivo 12.0x"),
         (FakeInfo(month_pnl=[0], total_pnl=[0]), "Sharpe no calculable"),
@@ -247,8 +273,26 @@ async def test_unified_account_is_only_informative() -> None:
     assert c.discarded == "" and c.bot_compatible is False
     assert c.capital_source == "cuenta_total" and c.capital_usd is not None
     assert c.capital_usd > 50000  # capital total de la cuenta (perpetuos = 0 en unified)
-    assert c.collateral == "USDC 100 %"
+    assert c.collateral == "USDC 100 %" and c.pnl_source == "perpetuos_sobre_cuenta_total"
     assert "NO COMPATIBLE CON EL BOT" in table([c])
+
+
+async def test_unified_performance_ignores_spot_gains() -> None:
+    crit = Criteria(ignore_account_mode=True)
+    whole = await ev(FakeInfo(mode="unifiedAccount"), crit)
+    perps = await ev(FakeInfo(mode="unifiedAccount", perp_pnl=[100, -300, 50, -120]), crit)
+    assert whole.discarded == perps.discarded == ""
+    assert whole.return_30d_pct and whole.return_30d_pct > 0  # PnL de perpetuos = total
+    assert perps.return_30d_pct is not None and perps.return_30d_pct < 0  # el spot ya no suma
+    assert perps.capital_usd == whole.capital_usd  # misma base: la cuenta total
+
+
+async def test_perp_volume_share_threshold() -> None:
+    mixed = FakeInfo(coins=("BTC", "@107"))
+    c = await ev(mixed)
+    assert c.discarded == "" and c.perp_volume_pct == D(50)
+    assert "volumen en perpetuos" in (await ev(mixed, Criteria(min_perp_volume_pct=D(60)))
+                                      ).discarded
 
 
 async def test_consistency_ranks_steady_above_lucky_month() -> None:
@@ -329,6 +373,6 @@ def test_cli_requires_a_source(capsys: pytest.CaptureFixture[str]) -> None:
 
 def test_defaults_match_the_agreed_criteria() -> None:
     c = Criteria()
-    assert (c.min_history_days, c.max_leverage, c.min_perp_capital, c.max_positions) == (
-        90, D(10), D(10000), 8)
+    assert (c.min_history_days, c.max_leverage, c.min_perp_capital, c.max_positions,
+            c.min_perp_volume_pct) == (90, D(10), D(10000), 8, D(50))
     _ = timedelta  # noqa: F841

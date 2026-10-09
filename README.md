@@ -453,7 +453,9 @@ Descarta:
 
 - cuentas en unified account o portfolio margin (el bot no puede seguirlas;
   con `--ignore-account-mode` se evalúan igual, **solo para informar**, y la
-  salida las marca como no compatibles);
+  salida las marca como no compatibles; su rentabilidad se mide solo con el PnL
+  de perpetuos sobre el capital total de la cuenta, porque el bot no copiaría
+  el spot);
 - capital en perpetuos por debajo de 10.000 USD (`--min-perp-capital`). Se
   mide en la cuenta, no con el dato del leaderboard;
 - menos de 90 días de historial (`--min-history-days`);
@@ -461,6 +463,8 @@ Descarta:
   últimos 30 días (`--max-leverage`);
 - scalpers (más de 40 fills al día) y wallets inactivas (menos de 5 fills en
   30 días);
+- menos de un 50 % del volumen de 30 días en perpetuos (`--min-perp-volume-pct`):
+  los traders sobre todo de spot no se pueden copiar;
 - más de un 10 % del volumen en activos sin mercado en Kraken;
 - más de 8 posiciones simultáneas.
 

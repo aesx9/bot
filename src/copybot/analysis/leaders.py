@@ -24,15 +24,20 @@ Datos por candidata (endpoint /info oficial):
   se usa el capital total de la cuenta (serie "month" de portfolio) y se indica.
 - spotClearinghouseState: moneda del colateral.
 - portfolio: series de capital y PnL acumulado. Cuentas estándar: perpMonth y
-  perpAllTime; unified / portfolio margin: month y allTime (las perp* traen
-  capital 0). Rentabilidad de cada periodo descontando depósitos y retiros
+  perpAllTime. Rentabilidad de cada periodo descontando depósitos y retiros
   (Modified Dietz): flujo = variación de capital - variación de PnL;
   r = variación de PnL / (capital inicial + flujo / 2). Los periodos con una
   base de capital por debajo de un mínimo no se usan (evitan rentabilidades
   absurdas con la cuenta casi vacía); si son demasiados, se descarta.
-- userFillsByTime (30 días): actividad (scalpers e inactivas), mercados
-  operados (volumen sin mercado en Kraken) y apalancamiento efectivo histórico
-  (posiciones reconstruidas con startPosition / capital de ese momento).
+  Unified / portfolio margin: las series perp* traen capital 0 pero sí el PnL de
+  perpetuos. El numerador es ese PnL de perpetuos (lo que el bot copiaría; el
+  resultado del spot no cuenta) y la base es el capital total de la cuenta
+  (month / allTime), con los flujos calculados sobre la serie total.
+- userFillsByTime (30 días): actividad (scalpers e inactivas), peso de los
+  perpetuos en el volumen (los traders sobre todo de spot se descartan: el bot
+  solo copia perpetuos), mercados operados (volumen sin mercado en Kraken) y
+  apalancamiento efectivo histórico (posiciones reconstruidas con
+  startPosition / capital de ese momento).
 
 Orden: puntuación de consistencia = el MENOR de los Sharpe anualizados del mes
 (rentabilidades diarias) y del total (periodos de la serie histórica).
@@ -96,6 +101,7 @@ class Criteria:
     min_total_periods: int = 8
     max_skipped_share: Decimal = Decimal("0.2")  # periodos sin base de capital suficiente
     max_unmapped_pct: Decimal = Decimal(10)
+    min_perp_volume_pct: Decimal = Decimal(50)  # peso mínimo de perpetuos en el volumen
     window_days: int = 30
     ignore_account_mode: bool = False
 
@@ -113,6 +119,7 @@ class Candidate:
     bot_compatible: bool | None = None
     capital_usd: Decimal | None = None
     capital_source: str = ""  # "perpetuos" | "cuenta_total"
+    pnl_source: str = ""  # "perpetuos" | "perpetuos_sobre_cuenta_total"
     collateral: str = ""
     history_days: int | None = None
     consistency: Decimal | None = None
@@ -128,6 +135,7 @@ class Candidate:
     fills_per_day: Decimal | None = None
     positions_now: int | None = None
     positions_max_30d: int | None = None
+    perp_volume_pct: Decimal | None = None
     unmapped_volume_pct: Decimal | None = None
     discarded: str = ""
 
@@ -179,14 +187,24 @@ def daily(pts: list[Point]) -> list[Point]:
     return [per_day[d] for d in sorted(per_day)]
 
 
-def flow_adjusted_returns(pts: list[Point], floor: Decimal) -> WindowStats:
-    """Rentabilidad de cada periodo descontando depósitos y retiros (Modified Dietz)."""
+def pnl_at(pts: list[Point], t: int) -> Decimal:
+    """PnL acumulado del último punto de la serie en o antes de t (0 si no hay)."""
+    i = bisect_right([p[0] for p in pts], t) - 1
+    return pts[i][2] if i >= 0 else ZERO
+
+
+def flow_adjusted_returns(pts: list[Point], floor: Decimal,
+                          gains_from: list[Point] | None = None) -> WindowStats:
+    """Rentabilidad de cada periodo descontando depósitos y retiros (Modified Dietz).
+
+    Con gains_from, el numerador es la variación del PnL de esa otra serie (p. ej. el
+    PnL de perpetuos de una unified account); capital y flujos salen de pts."""
     returns: list[Decimal] = []
     skipped = 0
     spans: list[int] = []
     for (t0, av0, p0), (t1, av1, p1) in zip(pts, pts[1:], strict=False):
-        gain = p1 - p0
-        flow = (av1 - av0) - gain  # depósitos (+) o retiros (-)
+        flow = (av1 - av0) - (p1 - p0)  # depósitos (+) o retiros (-)
+        gain = p1 - p0 if gains_from is None else pnl_at(gains_from, t1) - pnl_at(gains_from, t0)
         base = av0 + flow / 2
         if base < floor or base <= 0:
             skipped += 1
@@ -292,15 +310,19 @@ async def evaluate(info: InfoSource, address: str, source: str, markets: set[str
     spot = await info.spot_state(c.address)
     port = await info.portfolio(c.address)
     perp_capital = Decimal(str(chs["marginSummary"].get("accountValue") or 0))
-    month_key, total_key = ("perpMonth", "perpAllTime") if c.bot_compatible else (
-        "month", "allTime")
-    month_pts = points(port.get(month_key, {}))
-    total_pts = points(port.get(total_key, {}))
+    perp_month = points(port.get("perpMonth", {}))
+    perp_total = points(port.get("perpAllTime", {}))
     if c.bot_compatible:
-        c.capital_usd, c.capital_source = perp_capital, "perpetuos"
+        month_pts, total_pts = perp_month, perp_total
+        gains_month: list[Point] | None = None
+        gains_total: list[Point] | None = None
+        c.capital_usd, c.capital_source, c.pnl_source = perp_capital, "perpetuos", "perpetuos"
     else:
+        # Capital de perpetuos 0: base = cuenta total; numerador = solo PnL de perpetuos
+        month_pts, total_pts = points(port.get("month", {})), points(port.get("allTime", {}))
+        gains_month, gains_total = perp_month, perp_total
         c.capital_usd = month_pts[-1][1] if month_pts else ZERO
-        c.capital_source = "cuenta_total"
+        c.capital_source, c.pnl_source = "cuenta_total", "perpetuos_sobre_cuenta_total"
     c.collateral = collateral_summary(spot, perp_capital)
     if c.capital_usd < crit.min_perp_capital:
         c.discarded = (f"capital en {c.capital_source} {c.capital_usd:.0f} USD "
@@ -314,8 +336,8 @@ async def evaluate(info: InfoSource, address: str, source: str, markets: set[str
         c.discarded = f"historial de {c.history_days} días (< {crit.min_history_days})"
         return c
 
-    month = flow_adjusted_returns(daily(month_pts), crit.capital_floor)
-    total = flow_adjusted_returns(total_pts, crit.capital_floor)
+    month = flow_adjusted_returns(daily(month_pts), crit.capital_floor, gains_month)
+    total = flow_adjusted_returns(total_pts, crit.capital_floor, gains_total)
     for name, stats, needed in (("30 días", month, crit.min_daily_returns),
                                 ("total", total, crit.min_total_periods)):
         if len(stats.returns) < needed or stats.skipped_share > crit.max_skipped_share:
@@ -339,15 +361,21 @@ async def evaluate(info: InfoSource, address: str, source: str, markets: set[str
         c.discarded = f"inactivo: {len(fills)} fills en {crit.window_days} días"
         return c
     mapper = SymbolMapper(symbols, markets)
-    vol = unmapped = ZERO
+    vol = unmapped = spot_vol = ZERO
     for f in fills:
         coin = str(f.get("coin", ""))
-        if not is_perp(coin):
-            continue
         notional = Decimal(str(f.get("px", 0))) * Decimal(str(f.get("sz", 0)))
+        if not is_perp(coin):
+            spot_vol += notional
+            continue
         vol += notional
         if (symbols.overrides.get(coin) or mapper.default_symbol(coin)) not in markets:
             unmapped += notional
+    c.perp_volume_pct = vol / (vol + spot_vol) * 100 if vol + spot_vol else ZERO
+    if c.perp_volume_pct < crit.min_perp_volume_pct:
+        c.discarded = (f"volumen en perpetuos {c.perp_volume_pct:.1f} % "
+                       f"(< {crit.min_perp_volume_pct} %): opera sobre todo spot")
+        return c
     c.unmapped_volume_pct = unmapped / vol * 100 if vol else ZERO
     if c.unmapped_volume_pct > crit.max_unmapped_pct:
         c.discarded = (f"{c.unmapped_volume_pct:.1f} % del volumen en activos sin mercado "
@@ -469,6 +497,7 @@ async def run(args: argparse.Namespace) -> int:
         min_history_days=args.min_history_days,
         min_perp_capital=Decimal(str(args.min_perp_capital)),
         max_leverage=Decimal(str(args.max_leverage)),
+        min_perp_volume_pct=Decimal(str(args.min_perp_volume_pct)),
         ignore_account_mode=args.ignore_account_mode,
     )
     now = datetime.now(UTC)
@@ -514,6 +543,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                    help="capital mínimo medido en perpetuos (USD)")
     p.add_argument("--max-leverage", type=float, default=10,
                    help="apalancamiento efectivo máximo (ahora y p90 de 30 días)")
+    p.add_argument("--min-perp-volume-pct", type=float, default=50,
+                   help="peso mínimo de perpetuos en el volumen de 30 días (%%)")
     p.add_argument("--min-history-days", type=int, default=90)
     p.add_argument("--max-positions", type=int, default=8)
     p.add_argument("--max-fills-per-day", type=float, default=40)
