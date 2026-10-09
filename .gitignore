@@ -19,6 +19,9 @@ logs/
 *.log
 *.log.*
 *.csv
+# Backtest: datos públicos de mercado y operaciones simuladas (reproducibilidad sin red)
+!backtest/datos/*.csv
+!backtest/resultados/*.csv
 STOP
 
 # --- Python ---
