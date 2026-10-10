@@ -1,0 +1,46 @@
+{
+ "balances": [
+  {
+   "coin": "USDC",
+   "token": 0,
+   "total": "721167.83926948",
+   "hold": "0.0",
+   "entryNtl": "0.0"
+  },
+  {
+   "coin": "OMNIX",
+   "token": 53,
+   "total": "10579.0",
+   "hold": "0.0",
+   "entryNtl": "38.1182528"
+  },
+  {
+   "coin": "MEOW",
+   "token": 61,
+   "total": "58938.671478",
+   "hold": "0.0",
+   "entryNtl": "3.39486747"
+  },
+  {
+   "coin": "PEAR",
+   "token": 71,
+   "total": "97812.467464",
+   "hold": "0.0",
+   "entryNtl": "9.78124674"
+  },
+  {
+   "coin": "NEIRO",
+   "token": 78,
+   "total": "76213.618292",
+   "hold": "0.0",
+   "entryNtl": "7.71281817"
+  },
+  {
+   "coin": "BERA",
+   "token": 80,
+   "total": "5221.431912",
+   "hold": "0.0",
+   "entryNtl": "5.15616401"
+  }
+ ]
+}

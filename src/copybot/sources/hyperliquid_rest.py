@@ -40,7 +40,7 @@ log = logging.getLogger(__name__)
 HL_INFO_URL = "https://api.hyperliquid.xyz/info"
 
 IP_WEIGHT_PER_MINUTE = 1200
-REQUEST_WEIGHTS = {"clearinghouseState": 2, "allMids": 2}
+REQUEST_WEIGHTS = {"clearinghouseState": 2, "allMids": 2, "spotClearinghouseState": 2}
 DEFAULT_WEIGHT = 20
 
 # Modos en los que clearinghouseState refleja capital y posiciones del perp dex
@@ -196,6 +196,22 @@ class HyperliquidInfo:
                 raise LeaderDataError(f"allMids: precio no válido para {coin}")
             mids[coin] = value
         return mids
+
+    async def clearinghouse_raw(self, user: str) -> dict[str, Any]:
+        """clearinghouseState sin interpretar (para análisis: incluye positionValue y
+        leverage). En unified account / portfolio margin el capital aquí es 0."""
+        raw = await self._post({"type": "clearinghouseState", "user": user})
+        if not isinstance(raw, dict) or not isinstance(raw.get("marginSummary"), dict):
+            raise LeaderDataError("clearinghouseState: formato inesperado")
+        return raw
+
+    async def spot_state(self, user: str) -> dict[str, Any]:
+        """spotClearinghouseState: {"balances": [{"coin", "total", "hold", "entryNtl"}]}.
+        En unified account el colateral de los perpetuos está aquí."""
+        raw = await self._post({"type": "spotClearinghouseState", "user": user})
+        if not isinstance(raw, dict) or not isinstance(raw.get("balances"), list):
+            raise LeaderDataError("spotClearinghouseState: formato inesperado")
+        return raw
 
     async def portfolio(self, user: str) -> dict[str, Any]:
         """{"perpMonth": {"accountValueHistory": [[ms, "v"], ...], "pnlHistory": ...}, ...}"""

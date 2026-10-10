@@ -429,3 +429,30 @@ pública real:
    (fixtures `ecb_sdmx_real.txt` y `hl_leaderboard.json`).
 4. Primer arranque live a mano y después systemd. Documentado en el README,
    con cómo evitar dos instancias a la vez.
+
+## Corrección de rank_leaders (2026-10-09)
+Ejecutado sobre el leaderboard real, 387 de 400 wallets estaban en unified
+account o portfolio margin, y la única que pasaba los filtros tenía 68 USD en
+perpetuos y métricas absurdas. Cambios pedidos por el usuario:
+- **Capital mínimo** medido en perpetuos (`clearinghouseState`), no con el
+  dato del leaderboard (que incluye spot). En unified account y portfolio
+  margin el capital de perpetuos es 0 (verificado con la API real): para
+  informar se usa el capital total de la cuenta y se indica.
+- **Rentabilidad y drawdown descontando depósitos y retiros** (Modified Dietz).
+  Los periodos con base de capital inferior al 10 % del mínimo no se miden; si
+  son más del 20 %, la wallet se descarta.
+- **Apalancamiento efectivo máximo:** 10x por defecto, configurable. Se mira
+  el actual y el percentil 90 de los últimos 30 días, reconstruido a partir de
+  los fills.
+- **Historial mínimo:** 90 días.
+- **Orden por consistencia:** el mínimo del Sharpe del mes y del total. La
+  preselección del leaderboard exige ganancia en el mes y en el total.
+- `--ignore-account-mode`: solo informativo. El bot sigue sin soportar unified
+  account ni portfolio margin.
+- **Volumen mínimo en perpetuos** (añadido después): al menos un 50 % del
+  volumen de 30 días en perpetuos (`--min-perp-volume-pct`). Un trader de spot
+  pasaba el filtro de mercados en Kraken porque ese filtro solo mira perpetuos.
+- **Unified / portfolio margin, rendimiento solo de perpetuos** (añadido
+  después): numerador = PnL de perpetuos (series perpMonth / perpAllTime, que
+  traen capital 0 pero sí PnL); base y flujos = cuenta total (month /
+  allTime). Antes la ganancia del spot inflaba la rentabilidad.
