@@ -55,6 +55,14 @@ THRESHOLDS: dict[Strategy, Thresholds] = {
 MEAN_HOURS = 24  # media móvil del funding liquidado
 MAX_POSITIONS = 3  # simultáneas por estrategia, mismo nocional
 
+# Supuestos de ejecución que la especificación no fija (decididos antes de ver resultados):
+# - Cada cuenta reserva un 2 % para comisiones y funding: el nocional por posición es
+#   apalancamiento × asignación / 3 / 1,02, de modo que tres posiciones caben siempre al inicio.
+COST_BUFFER = 0.02
+# - A: si al cierre de una hora el capital de una plataforma cae por debajo del 50 % de la media
+#   de las dos, se transfiere la mitad de la diferencia (una transferencia, con su coste fijo).
+REBALANCE_TRIGGER = 0.50
+
 
 @dataclass(frozen=True)
 class Account:
