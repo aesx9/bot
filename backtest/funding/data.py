@@ -47,6 +47,8 @@ RESOLUTION_MS = {"1h": HOUR_MS, "1d": DAY_MS}
 MAX_PAGES = 1000
 HL_FUNDING_PAGE = 500
 HL_PAUSE_S = 0.25  # margen frente al límite de peso por minuto de Hyperliquid
+# Ante 429 (límite por minuto superado) se espera y se reintenta: 5, 10, 20, 40, 60 s.
+RATE_LIMIT_WAITS_S = (5.0, 10.0, 20.0, 40.0, 60.0)
 
 # Kraken usa códigos propios para algunas bases (en instrumentos de futuros ya vienen
 # normalizados en ``base``; en spot no).
@@ -179,10 +181,21 @@ def bars_from_rows(
 # --- descarga: Kraken Futures -------------------------------------------------------------
 
 
-def _get(client: httpx.Client, url: str, **params: Any) -> Any:
-    resp = client.get(url, params=params)
+def _send(request: Callable[[], httpx.Response]) -> httpx.Response:
+    """Ejecuta ``request`` reintentando tras un 429; cualquier otro error se propaga."""
+    for wait in RATE_LIMIT_WAITS_S:
+        resp = request()
+        if resp.status_code != 429:
+            break
+        time.sleep(wait)
+    else:
+        resp = request()
     resp.raise_for_status()
-    return resp.json()
+    return resp
+
+
+def _get(client: httpx.Client, url: str, **params: Any) -> Any:
+    return _send(lambda: client.get(url, params=params)).json()
 
 
 def fetch_kraken_perps(client: httpx.Client) -> list[KrakenPerp]:
@@ -270,8 +283,7 @@ def spot_bases_from_pairs(pairs: Iterable[dict[str, Any]]) -> set[str]:
 
 
 def _post(client: httpx.Client, payload: dict[str, Any]) -> Any:
-    resp = client.post(HL_INFO_URL, json=payload)
-    resp.raise_for_status()
+    resp = _send(lambda: client.post(HL_INFO_URL, json=payload))
     time.sleep(HL_PAUSE_S)
     return resp.json()
 

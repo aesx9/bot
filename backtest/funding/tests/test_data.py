@@ -194,3 +194,21 @@ def test_hyperliquid_bars_drop_in_progress_and_scale(monkeypatch: pytest.MonkeyP
         b = fetch_hl_bars(c, HlPerp("kPEPE", "PEPE", 1000.0, 10), "1d", T0, now)
     assert len(b) == 2 and b.c[0] == pytest.approx(1.5) and b.v[0] == pytest.approx(4000.0)
     assert HlPerp("X", "X", 1.0, 10).maintenance_margin == pytest.approx(0.05)
+
+
+def test_rate_limited_requests_wait_and_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(fdata, "HL_PAUSE_S", 0.0)
+    waits: list[float] = []
+    monkeypatch.setattr("backtest.funding.data.time.sleep", waits.append)
+    calls = iter([429, 429, 200])
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(next(calls), json=[])
+
+    with _client(handler) as c:
+        assert fdata._post(c, {"type": "x"}) == []
+    assert waits == [5.0, 10.0, 0.0]
+    monkeypatch.setattr(fdata, "RATE_LIMIT_WAITS_S", (1.0,))
+    with _client(lambda req: httpx.Response(429, json=[])) as c, \
+            pytest.raises(httpx.HTTPStatusError):
+        fdata._post(c, {"type": "x"})
