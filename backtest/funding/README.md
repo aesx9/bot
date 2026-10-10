@@ -27,7 +27,7 @@ de `src/copybot`. El resultado y el veredicto quedan en [`REPORT.md`](REPORT.md)
 | `data.py` | Descarga y validación de Kraken Futures, Kraken spot (pares) y Hyperliquid; CSV locales |
 | `universe.py` | Regla fija de universo (volumen diario medio ≥ 10 M USD en 90 días) |
 | `download.py` | Orquestación de las dos descargas y carga local |
-| `prepare.py` | Ventanas (A: 208 días desde 2026-03-16; B: 365 días) y alineación horaria |
+| `prepare.py` | Ventanas fijas (A: 208 días desde 2026-03-16; B: 365 días hasta las 00:00 UTC del día de la descarga), regla de datos completos y alineación horaria |
 | `engine.py` | Simulación horaria: señal, entradas/salidas, funding, costes, base, liquidación, reequilibrio |
 | `runner.py` | Tramos 70/30, robustez ±20 % (solo desarrollo), criterios y veredicto |
 | `report.py` | Informe Markdown y CSV de posiciones |
@@ -42,6 +42,15 @@ de `src/copybot`. El resultado y el veredicto quedan en [`REPORT.md`](REPORT.md)
 - Robustez ±20 % de los umbrales solo sobre desarrollo (un test lo comprueba).
 - Sin lookahead: la decisión de la hora `i` usa solo el funding de las 24 horas anteriores, ya
   liquidado (un test altera el futuro y comprueba que no cambia nada del pasado).
+
+## Regla de datos completos
+
+Fijada antes de descargar las series horarias: un activo entra en una estrategia solo si todas sus
+series tienen dato real en toda la ventana de esa estrategia (una vela por hora operable y funding
+en cada hora, también en las 24 h de calentamiento). Las velas que faltaban en la fuente y se
+rellenaron en la descarga para mantener la serie contigua no cuentan como dato. Si un activo no
+cumple, se excluye de esa estrategia y el informe lo indica con el motivo; nunca se rellena ni se
+acorta la ventana.
 
 ## Supuestos documentados
 

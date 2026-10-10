@@ -62,8 +62,9 @@ SPOT_BASE_ALIASES = {"XBT": "BTC", "XDG": "DOGE"}
 class Bars:
     """Velas OHLCV contiguas de ``step_ms``; ``t`` es la apertura de cada vela (ms UTC).
 
-    ``filled`` cuenta las velas que faltaban en la fuente y se rellenaron con el cierre anterior
-    (sin rango ni volumen)."""
+    ``filled`` son las aperturas de las velas que faltaban en la fuente y se rellenaron con el
+    cierre anterior (sin rango ni volumen) para mantener la serie contigua. Esas horas no son
+    datos: un activo con alguna dentro de su ventana se excluye (``prepare``)."""
 
     name: str
     step_ms: int
@@ -73,7 +74,7 @@ class Bars:
     l: list[float]  # noqa: E741
     c: list[float]
     v: list[float]
-    filled: int = 0
+    filled: tuple[int, ...] = ()
 
     def __len__(self) -> int:
         return len(self.t)
@@ -159,13 +160,13 @@ def bars_from_rows(
         raise DataError(f"{name}: sin velas cerradas")
     t_out: list[int] = []
     cols: tuple[list[float], ...] = ([], [], [], [], [])
-    filled = 0
+    filled: list[int] = []
     for t in range(times[0], times[-1] + step_ms, step_ms):
         row = rows.get(t)
         if row is None:
             prev = cols[3][-1]
             row = (prev, prev, prev, prev, 0.0)
-            filled += 1
+            filled.append(t)
         else:
             o, h, lo, c, v = row
             row = (o * scale, h * scale, lo * scale, c * scale, v / scale)
@@ -173,7 +174,7 @@ def bars_from_rows(
         for col, x in zip(cols, row, strict=True):
             col.append(x)
     co, ch, cl, cc, cv = cols
-    bars = Bars(name, step_ms, t_out, co, ch, cl, cc, cv, filled=filled)
+    bars = Bars(name, step_ms, t_out, co, ch, cl, cc, cv, filled=tuple(filled))
     validate_bars(bars)
     return bars
 
@@ -373,7 +374,7 @@ def save_bars(path: Path, b: Bars) -> None:
             w.writerow([b.t[i], *(repr(x) for x in (b.o[i], b.h[i], b.l[i], b.c[i], b.v[i]))])
 
 
-def load_bars(path: Path, name: str, step_ms: int, filled: int = 0) -> Bars:
+def load_bars(path: Path, name: str, step_ms: int, filled: Iterable[int] = ()) -> Bars:
     t: list[int] = []
     cols: tuple[list[float], ...] = ([], [], [], [], [])
     with path.open(newline="", encoding="utf-8") as fh:
@@ -382,7 +383,7 @@ def load_bars(path: Path, name: str, step_ms: int, filled: int = 0) -> Bars:
             for col, key in zip(cols, ("open", "high", "low", "close", "volume"), strict=True):
                 col.append(float(row[key]))
     o, h, lo, c, v = cols
-    bars = Bars(name, step_ms, t, o, h, lo, c, v, filled=filled)
+    bars = Bars(name, step_ms, t, o, h, lo, c, v, filled=tuple(filled))
     validate_bars(bars)
     return bars
 

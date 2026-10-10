@@ -145,9 +145,9 @@ def _assets(flip_after: int | None = None) -> list:  # type: ignore[type-arg]
 def test_reserved_data_never_changes_development_or_robustness() -> None:
     w = Window(T0, T0 + 1000 * 3_600_000)
     spec = make_spec()
-    a = run_strategy(Strategy.A, _assets(), w, [], spec, only_dev=False)
-    b = run_strategy(Strategy.A, _assets(flip_after=724), w, [], spec, only_dev=False)
-    c = run_strategy(Strategy.A, _assets(), w, [], spec, only_dev=True)
+    a = run_strategy(Strategy.A, _assets(), w, [], [], spec, only_dev=False)
+    b = run_strategy(Strategy.A, _assets(flip_after=724), w, [], [], spec, only_dev=False)
+    c = run_strategy(Strategy.A, _assets(), w, [], [], spec, only_dev=True)
     assert a.dev == b.dev == c.dev
     assert a.robustness == b.robustness == c.robustness
     assert a.reserved != b.reserved and c.reserved is None and c.verdict is None

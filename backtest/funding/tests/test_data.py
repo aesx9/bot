@@ -10,7 +10,7 @@ from typing import Any
 import httpx
 import pytest
 
-from backtest.data import DataError
+from backtest.data import DataError, iso
 from backtest.funding import data as fdata
 from backtest.funding.config import DAY_MS, HOUR_MS
 from backtest.funding.data import (
@@ -48,7 +48,7 @@ def test_bars_drop_the_candle_in_progress_and_fill_internal_gaps() -> None:
     now = T0 + 5 * HOUR_MS + 1  # la vela de las T0+5h sigue abierta
     b = bars_from_rows("x", HOUR_MS, rows, now)
     assert b.t == [T0 + i * HOUR_MS for i in range(5)]
-    assert b.filled == 1
+    assert b.filled == (T0 + 2 * HOUR_MS,)
     assert (b.o[2], b.h[2], b.l[2], b.c[2], b.v[2]) == (11.5, 11.5, 11.5, 11.5, 0.0)
 
 
@@ -134,7 +134,7 @@ def test_kraken_bars_paginate_until_more_candles_is_false() -> None:
 
     with _client(handler) as c:
         b = fetch_kraken_bars(c, "trade", "PF_X", "1h", T0, T0 + 100 * HOUR_MS)
-    assert len(calls) == 3 and len(b) == 9 and b.filled == 0
+    assert len(calls) == 3 and len(b) == 9 and b.filled == ()
     assert calls[1] == (T0 + 2 * HOUR_MS) // 1000 + 1
 
 
@@ -212,3 +212,38 @@ def test_rate_limited_requests_wait_and_retry(monkeypatch: pytest.MonkeyPatch) -
     with _client(lambda req: httpx.Response(429, json=[])) as c, \
             pytest.raises(httpx.HTTPStatusError):
         fdata._post(c, {"type": "x"})
+
+
+# --- regla de datos completos -------------------------------------------------------------
+
+
+def test_filled_or_absent_hours_make_a_series_incomplete() -> None:
+    from backtest.funding.prepare import Window, incomplete, missing_bars, missing_rates
+
+    w = Window(T0 + 30 * HOUR_MS, T0 + 40 * HOUR_MS)
+    rows = _rows(50)
+    del rows[T0 + 33 * HOUR_MS]  # se rellena en la descarga: no es dato
+    b = bars_from_rows("x", HOUR_MS, rows, T0 + 60 * HOUR_MS)
+    assert missing_bars(b, w) == [T0 + 33 * HOUR_MS]
+    short = bars_from_rows("y", HOUR_MS, _rows(38), T0 + 60 * HOUR_MS)  # acaba antes
+    assert missing_bars(short, w) == [T0 + 38 * HOUR_MS, T0 + 39 * HOUR_MS]
+    # El funding también debe cubrir las 24 h de calentamiento.
+    r = Rates("f", [T0 + i * HOUR_MS for i in range(7, 40)], [0.0] * 33)
+    assert missing_rates(r, w) == [T0 + 6 * HOUR_MS]
+    assert incomplete(w, {"Kraken": b}, {"Kraken": r}) == [
+        f"velas Kraken: 1 hora sin dato (primera {iso(T0 + 33 * HOUR_MS)})",
+        f"funding Kraken: 1 hora sin dato (primera {iso(T0 + 6 * HOUR_MS)})"]
+    full = Rates("f", [T0 + i * HOUR_MS for i in range(6, 40)], [0.0] * 34)
+    assert incomplete(w, {}, {"Kraken": full}) == []
+
+
+def test_windows_are_fixed_and_never_shortened() -> None:
+    from backtest.funding.config import WINDOW_A_START_MS
+    from backtest.funding.prepare import window_a, window_b
+
+    end_a = WINDOW_A_START_MS + 208 * DAY_MS
+    assert window_a(end_a + 5 * HOUR_MS).end == end_a
+    with pytest.raises(DataError, match="después de la descarga"):
+        window_a(end_a - HOUR_MS)
+    w = window_b(end_a + 5 * HOUR_MS + 7)
+    assert (w.start, w.end) == (end_a - 365 * DAY_MS, end_a)

@@ -55,13 +55,13 @@ def guard_reserved(lock_path: Path, commit: str, dirty: bool) -> None:
 def run_all(data_dir: Path, *, only_dev: bool) -> list[StrategyResult]:
     uni = load_universe(data_dir)
     account, costs = Account(), Costs()
-    assets_a, win_a, cov_a = build_a(data_dir, uni, costs)
-    res_a = run_strategy(Strategy.A, assets_a, win_a, cov_a, spec_a(account, costs),
+    assets_a, win_a, cov_a, exc_a = build_a(data_dir, uni, costs)
+    res_a = run_strategy(Strategy.A, assets_a, win_a, cov_a, exc_a, spec_a(account, costs),
                          only_dev=only_dev, costs=costs, log=_log)
-    assets_b, win_b, cov_b = build_b(data_dir, uni, costs, SpotFee.MAKER)
-    taker_b, _, _ = build_b(data_dir, uni, costs, SpotFee.TAKER)
+    assets_b, win_b, cov_b, exc_b = build_b(data_dir, uni, costs, SpotFee.MAKER)
+    taker_b, _, _, _ = build_b(data_dir, uni, costs, SpotFee.TAKER)
     spec = spec_b(account, costs)
-    res_b = run_strategy(Strategy.B, assets_b, win_b, cov_b, spec, only_dev=only_dev,
+    res_b = run_strategy(Strategy.B, assets_b, win_b, cov_b, exc_b, spec, only_dev=only_dev,
                          taker_assets=taker_b, taker_spec=spec, costs=costs, log=_log)
     return [res_a, res_b]
 

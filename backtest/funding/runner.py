@@ -8,6 +8,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from backtest.data import DataError
 from backtest.funding.config import (
     COST_BUFFER,
     DEV_FRACTION,
@@ -27,7 +28,14 @@ from backtest.funding.config import (
     Thresholds,
 )
 from backtest.funding.engine import Asset, Position, RunResult, Spec, simulate, spread_signal
-from backtest.funding.prepare import VENUE_HL, VENUE_KRAKEN, VENUE_SPOT, Coverage, Window
+from backtest.funding.prepare import (
+    VENUE_HL,
+    VENUE_KRAKEN,
+    VENUE_SPOT,
+    Coverage,
+    Exclusion,
+    Window,
+)
 from backtest.metrics import max_drawdown
 
 DEV = "desarrollo"
@@ -346,6 +354,7 @@ class StrategyResult:
     window: Window
     assets: list[str]
     coverage: list[Coverage]
+    excluded: list[Exclusion]  # activos del universo sin datos completos en la ventana
     thresholds: Thresholds
     spec: Spec
     dev: Segment
@@ -369,6 +378,7 @@ def run_strategy(
     assets: Sequence[Asset],
     window: Window,
     coverage: list[Coverage],
+    excluded: list[Exclusion],
     spec: Spec,
     *,
     only_dev: bool,
@@ -378,6 +388,8 @@ def run_strategy(
     criteria: Criteria | None = None,
     log: Log = _quiet,
 ) -> StrategyResult:
+    if not assets:
+        raise DataError(f"{strategy}: ningún activo tiene datos completos en la ventana")
     crit = criteria or Criteria()
     th = THRESHOLDS[strategy]
     signals = [spread_signal(a) for a in assets]
@@ -409,6 +421,7 @@ def run_strategy(
         window=window,
         assets=[a.name for a in assets],
         coverage=coverage,
+        excluded=excluded,
         thresholds=th,
         spec=spec,
         dev=dev,

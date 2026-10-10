@@ -250,13 +250,18 @@ def _data(r: StrategyResult) -> list[str]:
                 "índice spot de la API de gráficos de Kraken Futures (`/api/charts/v1/spot/PF_*/"
                 "1h`) como aproximación del precio spot de Kraken**; el índice agrega varias "
                 "plataformas y no es el libro de órdenes spot de Kraken.", ""]
-    rows = []
-    for c in r.coverage:
-        rows.append([c.asset,
-                     ", ".join(f"{k}: {v}" for k, v in c.filled_bars.items()),
-                     ", ".join(f"{k}: {v}" for k, v in c.missing_rates.items())])
-    out += [table(["Activo", "Velas planas sin volumen en la ventana", "Horas sin funding"],
-                  rows), ""]
+    out += ["**Regla de datos completos** (fijada antes de descargar): un activo entra solo si "
+            "todas sus series tienen dato real en toda la ventana (una vela por hora y funding "
+            "en cada hora, también en las 24 h de calentamiento). Si no, se excluye de la "
+            "estrategia; nunca se rellena ni se acorta la ventana.", ""]
+    if r.excluded:
+        out += [table(["Activo excluido", "Motivo"],
+                      [[e.asset, "; ".join(e.reasons)] for e in r.excluded]), ""]
+    else:
+        out += ["Ningún activo del universo excluido por datos incompletos.", ""]
+    rows = [[c.asset, ", ".join(f"{k}: {v}" for k, v in c.flat_bars.items())]
+            for c in r.coverage]
+    out += [table(["Activo", "Velas de la fuente sin operaciones en la ventana"], rows), ""]
     return out
 
 

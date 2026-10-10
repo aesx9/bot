@@ -218,7 +218,7 @@ def _series_info(**series: Bars | Rates) -> dict[str, Any]:
     for key, s in series.items():
         entry: dict[str, Any] = {"rows": len(s.t), "first": iso(s.t[0]), "last": iso(s.t[-1])}
         if isinstance(s, Bars):
-            entry["filled"] = s.filled
+            entry["filled"] = list(s.filled)  # aperturas rellenadas (no son datos)
         out[key] = entry
     return out
 

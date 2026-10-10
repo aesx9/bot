@@ -16,8 +16,10 @@ from backtest.funding.config import DAY_MS, HOUR_MS, WINDOW_A_START_MS
 from backtest.funding.download import download_series, download_universe, load_universe
 from backtest.funding.report import render_universe
 
-NOW = WINDOW_A_START_MS + 208 * DAY_MS + 10 * HOUR_MS + 30 * 60_000  # 2026-10-10T10:30Z
+NOW = WINDOW_A_START_MS + 208 * DAY_MS + 5 * HOUR_MS + 30 * 60_000  # 2026-10-10T05:30Z
 DATA_START = NOW - 380 * DAY_MS
+# Hora sin funding de Kraken para ETH: dentro de la ventana de B, antes de la de A.
+ETH_FUNDING_GAP = WINDOW_A_START_MS - 30 * DAY_MS
 COINS = {"BTC": ("PF_XBTUSD", 50_000.0), "ETH": ("PF_ETHUSD", 3_000.0),
          "LOW": ("PF_LOWUSD", 1.0)}
 
@@ -65,7 +67,8 @@ def _kraken(req: httpx.Request, spot_blocked: bool) -> httpx.Response:
     if path.endswith("/historical-funding-rates"):
         hours = range(DATA_START - DATA_START % HOUR_MS + 10 * DAY_MS, NOW, HOUR_MS)
         rates = [{"timestamp": iso(t), "fundingRate": 0.0,
-                  "relativeFundingRate": _rate(base, t, "kraken")} for t in hours]
+                  "relativeFundingRate": _rate(base, t, "kraken")} for t in hours
+                 if not (base == "ETH" and t == ETH_FUNDING_GAP)]
         return httpx.Response(200, json={"result": "success", "rates": rates})
     _, _, _, _, tick, _sym, res = path.split("/")
     step = HOUR_MS if res == "1h" else DAY_MS
@@ -153,14 +156,22 @@ def test_blocked_spot_api_leaves_b_unchecked_and_blocks_series(tmp_path: Path) -
 def test_windows_follow_the_spec(datos: Path) -> None:
     res = cli.run_all(datos, only_dev=True)
     a, b = res
-    assert a.window.start >= WINDOW_A_START_MS
-    assert a.window.hours <= 208 * 24
-    assert b.window.hours == 365 * 24
+    assert a.window.start == WINDOW_A_START_MS and a.window.hours == 208 * 24
+    assert b.window.hours == 365 * 24 and b.window.end == NOW - NOW % DAY_MS
     assert a.dev.stats.positions > 0 and b.dev.stats.positions > 0
     assert a.dev.stats.transfers >= 1  # la transferencia inicial
     assert b.dev.stats.transfers == 0
     assert b.taker_dev is not None
     assert b.taker_dev.stats.fees > b.dev.stats.fees  # spot taker cuesta más
+
+
+def test_assets_with_incomplete_data_are_excluded_per_strategy(datos: Path) -> None:
+    a, b = cli.run_all(datos, only_dev=True)
+    assert sorted(a.assets) == ["BTC", "ETH"] and a.excluded == []
+    assert b.assets == ["BTC"] and b.window.start <= ETH_FUNDING_GAP
+    (e,) = b.excluded
+    assert e.asset == "ETH" and e.reasons == [
+        f"funding Kraken: 1 hora sin dato (primera {iso(ETH_FUNDING_GAP)})"]
 
 
 def test_full_run_report_and_csv(datos: Path, tmp_path: Path) -> None:
@@ -173,7 +184,9 @@ def test_full_run_report_and_csv(datos: Path, tmp_path: Path) -> None:
     text = (tmp_path / "REPORT.md").read_text(encoding="utf-8")
     for needle in ("Veredicto", "Transferencias", "Coste transferencias", "Funding cobrado",
                    "Resultado por base", "Liquidaciones", "índice spot", "Días para cubrir",
-                   "spot taker", "Robustez", "Por activo", "abc123", "3,00 USD por movimiento"):
+                   "spot taker", "Robustez", "Por activo", "abc123", "3,00 USD por movimiento",
+                   "Regla de datos completos", "| ETH | funding Kraken: 1 hora sin dato",
+                   "tarda 2 h en llegar"):
         assert needle in text, needle
     for r in results:
         assert r.verdict is not None
