@@ -370,6 +370,20 @@ class StrategyResult:
     cycle_cost: dict[str, float] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class Unevaluable:
+    """Estrategia sin ningún activo que cumpla la regla de datos: no se simula."""
+
+    strategy: Strategy
+    window: Window
+    excluded: list[Exclusion]
+    assets: list[str] = field(default_factory=list)
+    coverage: list[Coverage] = field(default_factory=list)
+    verdict: None = None
+
+
+Outcome = StrategyResult | Unevaluable
+
 Log = Callable[[str], None]
 
 

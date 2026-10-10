@@ -14,7 +14,7 @@ from backtest.funding.data import read_json, write_json
 from backtest.funding.download import MANIFEST, download_series, download_universe, load_universe
 from backtest.funding.prepare import build_a, build_b
 from backtest.funding.report import Meta, render_universe, write_outputs
-from backtest.funding.runner import StrategyResult, run_strategy, spec_a, spec_b
+from backtest.funding.runner import Outcome, Unevaluable, run_strategy, spec_a, spec_b
 
 ROOT = Path(__file__).resolve().parent
 LOCK = "reservado_ejecutado.json"
@@ -52,18 +52,28 @@ def guard_reserved(lock_path: Path, commit: str, dirty: bool) -> None:
                           "congelado (o usa --solo-desarrollo)")
 
 
-def run_all(data_dir: Path, *, only_dev: bool) -> list[StrategyResult]:
+def run_all(data_dir: Path, *, only_dev: bool) -> list[Outcome]:
+    """Una estrategia sin activos con datos válidos queda «no evaluable» (no falla)."""
     uni = load_universe(data_dir)
     account, costs = Account(), Costs()
+    out: list[Outcome] = []
     assets_a, win_a, cov_a, exc_a = build_a(data_dir, uni, costs)
-    res_a = run_strategy(Strategy.A, assets_a, win_a, cov_a, exc_a, spec_a(account, costs),
-                         only_dev=only_dev, costs=costs, log=_log)
+    if assets_a:
+        out.append(run_strategy(Strategy.A, assets_a, win_a, cov_a, exc_a,
+                                spec_a(account, costs), only_dev=only_dev, costs=costs,
+                                log=_log))
+    else:
+        out.append(Unevaluable(Strategy.A, win_a, exc_a))
     assets_b, win_b, cov_b, exc_b = build_b(data_dir, uni, costs, SpotFee.MAKER)
-    taker_b, _, _, _ = build_b(data_dir, uni, costs, SpotFee.TAKER)
-    spec = spec_b(account, costs)
-    res_b = run_strategy(Strategy.B, assets_b, win_b, cov_b, exc_b, spec, only_dev=only_dev,
-                         taker_assets=taker_b, taker_spec=spec, costs=costs, log=_log)
-    return [res_a, res_b]
+    if assets_b:
+        taker_b, _, _, _ = build_b(data_dir, uni, costs, SpotFee.TAKER)
+        spec = spec_b(account, costs)
+        out.append(run_strategy(Strategy.B, assets_b, win_b, cov_b, exc_b, spec,
+                                only_dev=only_dev, taker_assets=taker_b, taker_spec=spec,
+                                costs=costs, log=_log))
+    else:
+        out.append(Unevaluable(Strategy.B, win_b, exc_b))
+    return out
 
 
 def main(argv: list[str] | None = None) -> int:

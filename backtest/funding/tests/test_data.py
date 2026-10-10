@@ -230,18 +230,34 @@ def test_filled_or_absent_hours_make_a_series_incomplete() -> None:
     # El funding también debe cubrir las 24 h de calentamiento.
     r = Rates("f", [T0 + i * HOUR_MS for i in range(7, 40)], [0.0] * 33)
     assert missing_rates(r, w) == [T0 + 6 * HOUR_MS]
-    assert incomplete(w, {"Kraken": b}, {"Kraken": r}) == [
-        f"velas Kraken: 1 hora sin dato (primera {iso(T0 + 33 * HOUR_MS)})",
-        f"funding Kraken: 1 hora sin dato (primera {iso(T0 + 6 * HOUR_MS)})"]
-    full = Rates("f", [T0 + i * HOUR_MS for i in range(6, 40)], [0.0] * 34)
-    assert incomplete(w, {}, {"Kraken": full}) == []
+    assert incomplete(w, {"Kraken": b}, {}) == [
+        f"velas Kraken: 1 hora sin dato (primera {iso(T0 + 33 * HOUR_MS)})"]
+
+
+def test_missing_funding_is_tolerated_up_to_half_a_percent_of_the_window() -> None:
+    from backtest.funding.prepare import Window, incomplete, max_missing_funding
+
+    w = Window(T0 + 24 * HOUR_MS, T0 + 1024 * HOUR_MS)  # 1000 h: se admiten 5 horas
+    assert max_missing_funding(w) == 5
+    hours = range(0, 1024)
+
+    def rates(gaps: set[int]) -> Rates:
+        t = [T0 + i * HOUR_MS for i in hours if i not in gaps]
+        return Rates("f", t, [0.0] * len(t))
+
+    # Las horas se cuentan una vez aunque falten en las dos plataformas, también en el
+    # calentamiento: 5 distintas se admiten, 6 excluyen.
+    assert incomplete(w, {}, {"K": rates({3, 100, 200}), "H": rates({100, 300, 400})}) == []
+    assert incomplete(w, {}, {"K": rates({3, 100, 200}), "H": rates({300, 400, 500})}) == [
+        f"funding: 6 horas sin dato (primera {iso(T0 + 3 * HOUR_MS)}) en alguna plataforma, "
+        "más del 0,50 % de 1000 h (máximo 5)"]
 
 
 def test_windows_are_fixed_and_never_shortened() -> None:
     from backtest.funding.config import WINDOW_A_START_MS
     from backtest.funding.prepare import window_a, window_b
 
-    end_a = WINDOW_A_START_MS + 208 * DAY_MS
+    end_a = WINDOW_A_START_MS + 207 * DAY_MS  # 2026-10-10
     assert window_a(end_a + 5 * HOUR_MS).end == end_a
     with pytest.raises(DataError, match="después de la descarga"):
         window_a(end_a - HOUR_MS)

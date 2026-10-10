@@ -14,11 +14,17 @@ HOURS_PER_YEAR = 24 * 365
 
 # --- ventanas de datos --------------------------------------------------------------------
 
-# A: 208 días desde 2026-03-16 (las 5000 velas de 1h que sirve candleSnapshot de Hyperliquid).
-WINDOW_A_START_MS = 1_773_619_200_000  # 2026-03-16T00:00:00Z
-WINDOW_A_DAYS = 208
+# A: 207 días, del 2026-03-17 al 2026-10-10 (fija). candleSnapshot de Hyperliquid solo sirve
+# las 5000 velas de 1h más recientes y en la descarga ya no tenía las primeras del 2026-03-16.
+WINDOW_A_START_MS = 1_773_705_600_000  # 2026-03-17T00:00:00Z
+WINDOW_A_DAYS = 207
 # B: sus propios 365 días (el funding real de Kraken cubre ≈1 año).
 WINDOW_B_DAYS = 365
+
+# Regla de datos (fijada antes de ver resultados): las horas sin funding de cualquier plataforma
+# cuentan como funding cero si no superan el 0,5 % de las horas de la ventana para ese activo;
+# por encima, el activo se excluye. Las velas de precio no admiten ninguna ausencia.
+MAX_MISSING_FUNDING_FRACTION = 0.005
 
 DEV_FRACTION = 0.70  # 70 % inicial de cada ventana para desarrollo, 30 % final reservado
 

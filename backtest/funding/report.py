@@ -12,6 +12,7 @@ from pathlib import Path
 from backtest.data import iso
 from backtest.funding.config import (
     COST_BUFFER,
+    MAX_MISSING_FUNDING_FRACTION,
     MAX_POSITIONS,
     MEAN_HOURS,
     REBALANCE_TRIGGER,
@@ -23,8 +24,10 @@ from backtest.funding.config import (
 from backtest.funding.download import Universe
 from backtest.funding.engine import Position
 from backtest.funding.runner import (
+    Outcome,
     Segment,
     StrategyResult,
+    Unevaluable,
     days_to_cover,
     positions_of,
 )
@@ -234,34 +237,46 @@ def _cover_b(r: StrategyResult, segs: Sequence[tuple[str, Segment]]) -> list[str
     return out
 
 
-def _data(r: StrategyResult) -> list[str]:
+def _data(r: Outcome) -> list[str]:
     w = r.window
     out = [
         f"Ventana: {day(w.start)} → {day(w.end)} ({num(w.hours / 24.0, 1)} días, {w.hours} h). "
-        f"Activos: {', '.join(r.assets)}.",
+        f"Activos: {', '.join(r.assets) or 'ninguno'}.",
         "",
     ]
     if r.strategy is Strategy.A:
         out += ["Velas de 1h `trade` de Kraken Futures y `candleSnapshot` de Hyperliquid, funding "
                 "real horario de ambas plataformas. Solo datos reales: ningún precio de "
-                "Hyperliquid se sustituye por el de Kraken.", ""]
+                "Hyperliquid se sustituye por el de Kraken. La ventana empieza el 2026-03-17 "
+                "porque `candleSnapshot` solo sirve las 5000 velas de 1h más recientes y en la "
+                "descarga ya no tenía las primeras del 2026-03-16.", ""]
     else:
         out += ["Perpetuo: velas de 1h `trade` de Kraken Futures y funding real horario. **Spot: "
                 "índice spot de la API de gráficos de Kraken Futures (`/api/charts/v1/spot/PF_*/"
                 "1h`) como aproximación del precio spot de Kraken**; el índice agrega varias "
                 "plataformas y no es el libro de órdenes spot de Kraken.", ""]
-    out += ["**Regla de datos completos** (fijada antes de descargar): un activo entra solo si "
-            "todas sus series tienen dato real en toda la ventana (una vela por hora y funding "
-            "en cada hora, también en las 24 h de calentamiento). Si no, se excluye de la "
-            "estrategia; nunca se rellena ni se acorta la ventana.", ""]
+    out += ["**Regla de datos** (fijada antes de ver resultados): un activo entra solo si tiene "
+            "una vela real en cada hora de la ventana en todas sus series de precio (ninguna "
+            "ausencia). Las horas sin funding en cualquier plataforma, en la ventana o en las "
+            f"{MEAN_HOURS} h de calentamiento, cuentan como funding cero (sin rellenar) si no "
+            f"superan el {pct(MAX_MISSING_FUNDING_FRACTION, 1)} de las horas de la ventana; por "
+            "encima, el activo se excluye. Nunca se acorta la ventana.", ""]
     if r.excluded:
         out += [table(["Activo excluido", "Motivo"],
                       [[e.asset, "; ".join(e.reasons)] for e in r.excluded]), ""]
     else:
-        out += ["Ningún activo del universo excluido por datos incompletos.", ""]
-    rows = [[c.asset, ", ".join(f"{k}: {v}" for k, v in c.flat_bars.items())]
+        out += ["Ningún activo del universo excluido por datos.", ""]
+    if not r.coverage:
+        return out
+    rows = [[c.asset, ", ".join(f"{k}: {v}" for k, v in c.flat_bars.items()),
+             ", ".join(f"{k}: {len(v)}" for k, v in c.missing_funding.items())]
             for c in r.coverage]
-    out += [table(["Activo", "Velas de la fuente sin operaciones en la ventana"], rows), ""]
+    out += [table(["Activo", "Velas de la fuente sin operaciones", "Horas sin funding (= 0)"],
+                  rows), ""]
+    hours = [f"- {c.asset} ({k}): {', '.join(iso(t) for t in v)}"
+             for c in r.coverage for k, v in c.missing_funding.items() if v]
+    if hours:
+        out += ["Horas sin funding que cuentan como cero:", "", *hours, ""]
     return out
 
 
@@ -310,8 +325,8 @@ def _rules(r: StrategyResult, meta: Meta) -> list[str]:
         f"funding (el nocional se divide entre {num(1 + COST_BUFFER, 2)}). Una entrada que "
         f"superase el apalancamiento máximo de su cuenta se descarta.",
         f"- **Costes**: {costs}",
-        "- **Funding**: tasa relativa horaria × cantidad × apertura de la hora; sin dato en una "
-        "hora, no se aplica y se cuenta.",
+        "- **Funding**: tasa relativa horaria × cantidad × apertura de la hora; una hora sin "
+        "dato cuenta como funding cero, también en la media de 24 h (ver Datos), y se anota.",
         "- **Liquidación**: cada hora, con los mínimos (largos) y máximos (cortos) de la vela a "
         "la vez, se compara el capital de cada cuenta con margen con su margen de mantenimiento "
         "(Kraken: primer tramo minorista del instrumento; Hyperliquid: 1 / (2 × apalancamiento "
@@ -351,7 +366,19 @@ def _strategy(r: StrategyResult, meta: Meta) -> list[str]:
     return out
 
 
-def render_report(results: Sequence[StrategyResult], meta: Meta) -> str:
+def _unevaluable(r: Unevaluable) -> list[str]:
+    return [f"## {TITLE[r.strategy]}", "", "### Veredicto", "",
+            "**No evaluable**: ningún activo del universo cumple la regla de datos en la "
+            "ventana; no se simula.", "", "### Datos", "", *_data(r)]
+
+
+def _verdict_txt(r: Outcome) -> str:
+    if isinstance(r, Unevaluable):
+        return "no evaluable"
+    return "sin emitir" if r.verdict is None else r.verdict.value
+
+
+def render_report(results: Sequence[Outcome], meta: Meta) -> str:
     out = [
         "# Backtest de arbitraje de funding neutral al precio",
         "",
@@ -366,18 +393,18 @@ def render_report(results: Sequence[StrategyResult], meta: Meta) -> str:
         "|---|---|",
     ]
     for r in results:
-        out.append(f"| {TITLE[r.strategy]} | "
-                   f"{'sin emitir' if r.verdict is None else r.verdict.value} |")
+        out.append(f"| {TITLE[r.strategy]} | {_verdict_txt(r)} |")
     out.append("")
     for r in results:
-        out += _strategy(r, meta)
+        out += _unevaluable(r) if isinstance(r, Unevaluable) else _strategy(r, meta)
     out += [
         "## Limitaciones",
         "",
         "- Universo elegido con el volumen de los 90 días previos a la descarga, que se solapan "
         "con el final de las ventanas (sesgo de selección asumido por la regla fija).",
         "- Ejecución a la apertura de la vela con slippage fijo; sin profundidad de libro.",
-        "- Transferencias y reequilibrios instantáneos con coste fijo supuesto.",
+        f"- Transferencias con coste fijo supuesto; el reequilibrio tarda {TRANSFER_DELAY_HOURS} "
+        "h en llegar (supuesto, no medido).",
         "- Liquidación en el peor caso simultáneo de todas las piernas de una cuenta.",
         "- B usa el índice spot de Kraken Futures como aproximación del spot de Kraken.",
         "",
@@ -411,8 +438,12 @@ def write_positions_csv(path: Path, r: StrategyResult) -> None:
             w.writerow(position_row(seg, p))
 
 
-def write_outputs(results: Sequence[StrategyResult], meta: Meta, out_dir: Path,
+def write_outputs(results: Sequence[Outcome], meta: Meta, out_dir: Path,
                   report_path: Path) -> None:
     for r in results:
-        write_positions_csv(out_dir / f"posiciones_{r.strategy.value}.csv", r)
+        path = out_dir / f"posiciones_{r.strategy.value}.csv"
+        if isinstance(r, Unevaluable):
+            path.unlink(missing_ok=True)  # sin simulación no hay posiciones
+        else:
+            write_positions_csv(path, r)
     report_path.write_text(render_report(results, meta), encoding="utf-8")

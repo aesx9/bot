@@ -69,12 +69,22 @@ def test_simulation_up_to_an_hour_ignores_everything_after_it() -> None:
     assert r1 == r2
 
 
-def test_missing_rate_blanks_the_signal_for_24_hours() -> None:
+def test_missing_rate_counts_as_zero_funding_in_the_signal() -> None:
     spread = [hourly(0.3)] * 60
-    spread[10] = math.nan
+    spread[30] = math.nan
     sig = spread_signal(spread_asset("X", spread))
-    assert all(math.isnan(x) for x in sig[11:35])
-    assert sig[35] == pytest.approx(0.3)
+    assert sig[30] == pytest.approx(0.3)
+    assert all(x == pytest.approx(0.3 * 23 / 24) for x in sig[31:55])
+    assert sig[55] == pytest.approx(0.3)
+
+
+def test_missing_rate_pays_nothing_and_is_counted() -> None:
+    spread = [hourly(0.4)] * N
+    spread[50] = math.nan
+    (p,) = _run([spread_asset("X", spread)]).positions
+    (q,) = _run([spread_asset("X", [hourly(0.4)] * N)]).positions
+    assert p.funding_hours_missing == 1 and q.funding_hours_missing == 0
+    assert q.funding_received - p.funding_received == pytest.approx(3.0 * 100.0 * hourly(0.4))
 
 
 # --- entradas y salidas -------------------------------------------------------------------

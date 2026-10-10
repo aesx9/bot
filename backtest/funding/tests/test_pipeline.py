@@ -15,11 +15,14 @@ from backtest.funding import data as fdata
 from backtest.funding.config import DAY_MS, HOUR_MS, WINDOW_A_START_MS
 from backtest.funding.download import download_series, download_universe, load_universe
 from backtest.funding.report import render_universe
+from backtest.funding.runner import StrategyResult, Unevaluable
 
 NOW = WINDOW_A_START_MS + 208 * DAY_MS + 5 * HOUR_MS + 30 * 60_000  # 2026-10-10T05:30Z
 DATA_START = NOW - 380 * DAY_MS
-# Hora sin funding de Kraken para ETH: dentro de la ventana de B, antes de la de A.
-ETH_FUNDING_GAP = WINDOW_A_START_MS - 30 * DAY_MS
+# Funding de Kraken ausente: 50 horas de ETH dentro de la ventana de B y antes de la de A (más del
+# 0,5 % de 8760 h: ETH sale de B, no de A) y una hora de BTC dentro de las dos (cuenta como cero).
+ETH_FUNDING_GAP = [WINDOW_A_START_MS - 30 * DAY_MS + k * HOUR_MS for k in range(50)]
+BTC_FUNDING_GAP = WINDOW_A_START_MS + 40 * DAY_MS + 6 * HOUR_MS
 COINS = {"BTC": ("PF_XBTUSD", 50_000.0), "ETH": ("PF_ETHUSD", 3_000.0),
          "LOW": ("PF_LOWUSD", 1.0)}
 
@@ -68,7 +71,8 @@ def _kraken(req: httpx.Request, spot_blocked: bool) -> httpx.Response:
         hours = range(DATA_START - DATA_START % HOUR_MS + 10 * DAY_MS, NOW, HOUR_MS)
         rates = [{"timestamp": iso(t), "fundingRate": 0.0,
                   "relativeFundingRate": _rate(base, t, "kraken")} for t in hours
-                 if not (base == "ETH" and t == ETH_FUNDING_GAP)]
+                 if not (base == "ETH" and t in ETH_FUNDING_GAP) and not (
+                     base == "BTC" and t == BTC_FUNDING_GAP)]
         return httpx.Response(200, json={"result": "success", "rates": rates})
     _, _, _, _, tick, _sym, res = path.split("/")
     step = HOUR_MS if res == "1h" else DAY_MS
@@ -154,9 +158,9 @@ def test_blocked_spot_api_leaves_b_unchecked_and_blocks_series(tmp_path: Path) -
 
 
 def test_windows_follow_the_spec(datos: Path) -> None:
-    res = cli.run_all(datos, only_dev=True)
-    a, b = res
-    assert a.window.start == WINDOW_A_START_MS and a.window.hours == 208 * 24
+    a, b = cli.run_all(datos, only_dev=True)
+    assert isinstance(a, StrategyResult) and isinstance(b, StrategyResult)
+    assert a.window.start == WINDOW_A_START_MS and a.window.hours == 207 * 24
     assert b.window.hours == 365 * 24 and b.window.end == NOW - NOW % DAY_MS
     assert a.dev.stats.positions > 0 and b.dev.stats.positions > 0
     assert a.dev.stats.transfers >= 1  # la transferencia inicial
@@ -167,11 +171,39 @@ def test_windows_follow_the_spec(datos: Path) -> None:
 
 def test_assets_with_incomplete_data_are_excluded_per_strategy(datos: Path) -> None:
     a, b = cli.run_all(datos, only_dev=True)
+    assert isinstance(a, StrategyResult) and isinstance(b, StrategyResult)
     assert sorted(a.assets) == ["BTC", "ETH"] and a.excluded == []
-    assert b.assets == ["BTC"] and b.window.start <= ETH_FUNDING_GAP
+    assert b.assets == ["BTC"] and b.window.start <= ETH_FUNDING_GAP[0]
     (e,) = b.excluded
     assert e.asset == "ETH" and e.reasons == [
-        f"funding Kraken: 1 hora sin dato (primera {iso(ETH_FUNDING_GAP)})"]
+        f"funding: 50 horas sin dato (primera {iso(ETH_FUNDING_GAP[0])}) en alguna plataforma, "
+        "más del 0,50 % de 8760 h (máximo 43)"]
+    # La hora sin funding de BTC se admite en las dos estrategias y queda anotada.
+    for r in (a, b):
+        (cov,) = [c for c in r.coverage if c.asset == "BTC"]
+        assert cov.missing_funding["Kraken"] == [BTC_FUNDING_GAP]
+
+
+def test_strategy_without_valid_assets_is_unevaluable(
+    datos: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from backtest.funding.config import Account, Costs
+    from backtest.funding.prepare import Exclusion, build_b
+    from backtest.funding.report import Meta, write_outputs
+
+    def empty_b(*args: object) -> object:
+        _, w, _, _ = build_b(*args)  # type: ignore[arg-type]
+        return [], w, [], [Exclusion("BTC", ["velas perpetuo: 1 hora sin dato (primera x)"])]
+
+    monkeypatch.setattr(cli, "build_b", empty_b)
+    a, b = cli.run_all(datos, only_dev=True)
+    assert isinstance(a, StrategyResult) and isinstance(b, Unevaluable)
+    out = tmp_path / "res"
+    write_outputs([a, b], Meta("abc", "x", True, Account(), Costs()), out, tmp_path / "R.md")
+    text = (tmp_path / "R.md").read_text(encoding="utf-8")
+    assert "| B — Cash and carry en Kraken: spot largo + perpetuo corto | no evaluable |" in text
+    assert "**No evaluable**" in text and "| BTC | velas perpetuo: 1 hora sin dato" in text
+    assert (out / "posiciones_A.csv").exists() and not (out / "posiciones_B.csv").exists()
 
 
 def test_full_run_report_and_csv(datos: Path, tmp_path: Path) -> None:
@@ -185,11 +217,13 @@ def test_full_run_report_and_csv(datos: Path, tmp_path: Path) -> None:
     for needle in ("Veredicto", "Transferencias", "Coste transferencias", "Funding cobrado",
                    "Resultado por base", "Liquidaciones", "índice spot", "Días para cubrir",
                    "spot taker", "Robustez", "Por activo", "abc123", "3,00 USD por movimiento",
-                   "Regla de datos completos", "| ETH | funding Kraken: 1 hora sin dato",
+                   "Regla de datos", "| ETH | funding: 50 horas sin dato",
+                   "Horas sin funding que cuentan como cero",
+                   f"- BTC (Kraken): {iso(BTC_FUNDING_GAP)}",
                    "tarda 2 h en llegar"):
         assert needle in text, needle
     for r in results:
-        assert r.verdict is not None
+        assert isinstance(r, StrategyResult) and r.verdict is not None
         csv_text = (tmp_path / "res" / f"posiciones_{r.strategy.value}.csv").read_text()
         assert csv_text.startswith("tramo,activo") and "reservado" in csv_text
 

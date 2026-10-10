@@ -163,27 +163,23 @@ class RunResult:
 def spread_signal(asset: Asset, hours: int = MEAN_HOURS) -> list[float]:
     """Media de ``tasa2 - tasa1`` de las ``hours`` horas anteriores a cada ``i``, anualizada.
 
-    ``signal[i]`` solo usa funding de horas ``< i`` (liquidado antes de decidir en ``i``). NaN si
-    falta algún dato en la ventana o no hay historia suficiente."""
+    ``signal[i]`` solo usa funding de horas ``< i`` (liquidado antes de decidir en ``i``). Una tasa
+    sin dato (NaN) cuenta como funding cero. NaN solo si no hay historia suficiente."""
     n = len(asset)
-    s = [b - a for a, b in zip(asset.leg1.rate, asset.leg2.rate, strict=True)]
+    s = [_zero_if_nan(b) - _zero_if_nan(a)
+         for a, b in zip(asset.leg1.rate, asset.leg2.rate, strict=True)]
     out = [math.nan] * n
     total = 0.0
-    bad = 0
     for i in range(n):
         if i >= hours:
-            out[i] = math.nan if bad else total / hours * HOURS_PER_YEAR
-            old = s[i - hours]
-            if math.isnan(old):
-                bad -= 1
-            else:
-                total -= old
-        x = s[i]
-        if math.isnan(x):
-            bad += 1
-        else:
-            total += x
+            out[i] = total / hours * HOURS_PER_YEAR
+            total -= s[i - hours]
+        total += s[i]
     return out
+
+
+def _zero_if_nan(x: float) -> float:
+    return 0.0 if math.isnan(x) else x
 
 
 # --- simulación ---------------------------------------------------------------------------
@@ -425,7 +421,7 @@ def simulate(
         for p in st.open:
             for leg, side in zip(_legs(assets[p.k]), p.sides(), strict=True):
                 rate = leg.rate[i]
-                if math.isnan(rate):  # hora sin dato de funding: se cuenta y no se aplica
+                if math.isnan(rate):  # hora sin dato de funding: cuenta como cero y se anota
                     p.missing += 1
                     continue
                 pay = side * p.q * leg.o[i] * rate

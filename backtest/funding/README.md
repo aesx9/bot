@@ -27,7 +27,7 @@ de `src/copybot`. El resultado y el veredicto quedan en [`REPORT.md`](REPORT.md)
 | `data.py` | Descarga y validación de Kraken Futures, Kraken spot (pares) y Hyperliquid; CSV locales |
 | `universe.py` | Regla fija de universo (volumen diario medio ≥ 10 M USD en 90 días) |
 | `download.py` | Orquestación de las dos descargas y carga local |
-| `prepare.py` | Ventanas fijas (A: 208 días desde 2026-03-16; B: 365 días hasta las 00:00 UTC del día de la descarga), regla de datos completos y alineación horaria |
+| `prepare.py` | Ventanas fijas (A: 2026-03-17 → 2026-10-10, 207 días; B: 365 días hasta las 00:00 UTC del día de la descarga), regla de datos completos y alineación horaria |
 | `engine.py` | Simulación horaria: señal, entradas/salidas, funding, costes, base, liquidación, reequilibrio |
 | `runner.py` | Tramos 70/30, robustez ±20 % (solo desarrollo), criterios y veredicto |
 | `report.py` | Informe Markdown y CSV de posiciones |
@@ -43,14 +43,21 @@ de `src/copybot`. El resultado y el veredicto quedan en [`REPORT.md`](REPORT.md)
 - Sin lookahead: la decisión de la hora `i` usa solo el funding de las 24 horas anteriores, ya
   liquidado (un test altera el futuro y comprueba que no cambia nada del pasado).
 
-## Regla de datos completos
+## Regla de datos
 
-Fijada antes de descargar las series horarias: un activo entra en una estrategia solo si todas sus
-series tienen dato real en toda la ventana de esa estrategia (una vela por hora operable y funding
-en cada hora, también en las 24 h de calentamiento). Las velas que faltaban en la fuente y se
-rellenaron en la descarga para mantener la serie contigua no cuentan como dato. Si un activo no
-cumple, se excluye de esa estrategia y el informe lo indica con el motivo; nunca se rellena ni se
-acorta la ventana.
+Fijada antes de ver resultados, por activo y estrategia:
+
+- **Velas de precio**: una vela real en cada hora operable de la ventana, en todas las series del
+  activo. Las velas que faltaban en la fuente y se rellenaron en la descarga para mantener la
+  serie contigua no cuentan como dato. Con alguna ausente, el activo se excluye.
+- **Funding**: las horas sin tasa en cualquiera de las plataformas (en la ventana o en las 24 h de
+  calentamiento, contadas una vez) cuentan como funding cero, sin rellenar, también en la media
+  de 24 h, si no superan el 0,5 % de las horas de la ventana. Por encima, el activo se excluye.
+- El informe lista los excluidos con el motivo y las horas sin funding de cada activo incluido.
+  Nunca se acorta la ventana; una estrategia sin activos válidos aparece como «no evaluable».
+- **Ventana de A**: del 2026-03-17 00:00 UTC al 2026-10-10 00:00 UTC (fija). `candleSnapshot` de
+  Hyperliquid solo sirve las 5000 velas de 1h más recientes y en la descarga ya no tenía las
+  primeras del 2026-03-16.
 
 ## Supuestos documentados
 

@@ -2,17 +2,22 @@
 
 Las ventanas son fijas y no dependen de los datos descargados:
 
-- A: 208 días desde el 2026-03-16.
+- A: del 2026-03-17 al 2026-10-10 (207 días).
 - B: los 365 días que terminan a las 00:00 UTC del día de la descarga.
 
 Cada activo lleva ``MEAN_HOURS`` horas previas de calentamiento para la media de 24 h (solo su
 funding se usa; los precios de esas horas no se operan).
 
-Regla de datos completos (fijada antes de descargar): un activo entra en una estrategia solo si
-cada una de sus series tiene dato real en toda la ventana: una vela por hora operable (las velas
-rellenadas en la descarga no cuentan) y funding en cada hora de la ventana y del calentamiento.
-Si no, se excluye de esa estrategia con el motivo; nunca se rellena ni se acorta la ventana, y
-nunca se sustituyen precios de una plataforma por los de otra.
+Regla de datos (fijada antes de ver resultados), por activo y estrategia:
+
+- Velas: una vela real por hora operable de la ventana (las rellenadas en la descarga no
+  cuentan). Con alguna ausente, el activo se excluye.
+- Funding: las horas de la ventana o del calentamiento sin tasa en alguna plataforma cuentan como
+  funding cero (la tasa queda NaN; el motor no la aplica y la anota) si no superan el 0,5 % de
+  las horas de la ventana; por encima, el activo se excluye.
+
+Los excluidos se informan con el motivo; nunca se rellena ni se acorta la ventana, y nunca se
+sustituyen precios de una plataforma por los de otra.
 """
 
 from __future__ import annotations
@@ -26,6 +31,7 @@ from backtest.data import DataError, iso
 from backtest.funding.config import (
     DAY_MS,
     HOUR_MS,
+    MAX_MISSING_FUNDING_FRACTION,
     MEAN_HOURS,
     WINDOW_A_DAYS,
     WINDOW_A_START_MS,
@@ -36,6 +42,7 @@ from backtest.funding.config import (
 from backtest.funding.data import Bars, Rates, read_json
 from backtest.funding.download import MANIFEST, Universe, load_series
 from backtest.funding.engine import Asset, Leg
+from backtest.report import pct
 
 VENUE_KRAKEN = "kraken_futures"
 VENUE_HL = "hyperliquid"
@@ -58,6 +65,7 @@ class Coverage:
 
     asset: str
     flat_bars: dict[str, int]  # velas de la fuente sin operaciones (planas y sin volumen)
+    missing_funding: dict[str, list[int]]  # horas sin funding (cuentan como cero), por serie
 
 
 @dataclass(frozen=True)
@@ -100,16 +108,26 @@ def missing_rates(r: Rates, w: Window) -> list[int]:
     return [t for t in grid_for(w) if t not in have]
 
 
+def max_missing_funding(w: Window) -> int:
+    return math.floor(MAX_MISSING_FUNDING_FRACTION * w.hours)
+
+
 def incomplete(w: Window, bars: Mapping[str, Bars], rates: Mapping[str, Rates]) -> list[str]:
-    """Motivos por los que las series de un activo no cubren ``w``; vacío si están completas."""
+    """Motivos por los que un activo se excluye de ``w``; vacío si sus datos son válidos.
+
+    Cualquier vela ausente excluye. Las horas sin funding (en cualquiera de las series, contadas
+    una vez) excluyen solo si superan el 0,5 % de las horas de la ventana."""
     out = []
     for key, b in bars.items():
         if gaps := missing_bars(b, w):
             out.append(f"velas {key}: {_hours_txt(gaps)}")
-    for key, r in rates.items():
-        if gaps := missing_rates(r, w):
-            out.append(f"funding {key}: {_hours_txt(gaps)}")
+    hours = sorted({t for r in rates.values() for t in missing_rates(r, w)})
+    limit = max_missing_funding(w)
+    if len(hours) > limit:
+        out.append(f"funding: {_hours_txt(hours)} en alguna plataforma, más del "
+                   f"{pct(MAX_MISSING_FUNDING_FRACTION)} de {w.hours} h (máximo {limit})")
     return out
+
 
 
 def _prices(b: Bars, grid: Sequence[int]) -> tuple[list[float], ...]:
@@ -151,14 +169,15 @@ def grid_for(w: Window) -> list[int]:
     return list(range(w.start - MEAN_HOURS * HOUR_MS, w.end, HOUR_MS))
 
 
-def _coverage(name: str, w: Window, bars: Mapping[str, Bars]) -> Coverage:
+def _coverage(name: str, w: Window, bars: Mapping[str, Bars],
+              rates: Mapping[str, Rates]) -> Coverage:
     flat = {}
     for key, b in bars.items():
         flat[key] = sum(
             1 for i, t in enumerate(b.t)
             if w.start <= t < w.end and b.v[i] == 0.0 and b.o[i] == b.h[i] == b.l[i] == b.c[i]
         )
-    return Coverage(name, flat)
+    return Coverage(name, flat, {key: missing_rates(r, w) for key, r in rates.items()})
 
 
 Built = tuple[list[Asset], Window, list[Coverage], list[Exclusion]]
@@ -177,7 +196,8 @@ def build_a(directory: Path, uni: Universe, costs: Costs) -> Built:
         assert isinstance(kt, Bars) and isinstance(ht, Bars)
         assert isinstance(kf, Rates) and isinstance(hf, Rates)
         bars = {"Kraken": kt, "Hyperliquid": ht}
-        if reasons := incomplete(w, bars, {"Kraken": kf, "Hyperliquid": hf}):
+        rates = {"Kraken": kf, "Hyperliquid": hf}
+        if reasons := incomplete(w, bars, rates):
             excluded.append(Exclusion(c.base, reasons))
             continue
         leg1 = make_leg(VENUE_KRAKEN, kt, kf, grid, costs.kraken_futures_taker,
@@ -185,7 +205,7 @@ def build_a(directory: Path, uni: Universe, costs: Costs) -> Built:
         leg2 = make_leg(VENUE_HL, ht, hf, grid, costs.hyperliquid_taker,
                         uni.hyperliquid[c.hyperliquid].maintenance_margin)
         assets.append(Asset(c.base, grid, leg1, leg2, MEAN_HOURS))
-        cov.append(_coverage(c.base, w, bars))
+        cov.append(_coverage(c.base, w, bars, rates))
     return assets, w, cov, excluded
 
 
@@ -200,12 +220,13 @@ def build_b(directory: Path, uni: Universe, costs: Costs, spot_fee: SpotFee) -> 
         kt, ks, kf = s["kraken_trade"], s["kraken_spot"], s["kraken_funding"]
         assert isinstance(kt, Bars) and isinstance(ks, Bars) and isinstance(kf, Rates)
         bars = {"perpetuo": kt, "índice spot": ks}
-        if reasons := incomplete(w, bars, {"Kraken": kf}):
+        rates = {"Kraken": kf}
+        if reasons := incomplete(w, bars, rates):
             excluded.append(Exclusion(c.base, reasons))
             continue
         leg1 = make_leg(VENUE_SPOT, ks, None, grid, costs.spot_fee(spot_fee), None)
         leg2 = make_leg(VENUE_KRAKEN, kt, kf, grid, costs.kraken_futures_taker,
                         uni.kraken[c.kraken].maintenance_margin)
         assets.append(Asset(c.base, grid, leg1, leg2, MEAN_HOURS))
-        cov.append(_coverage(c.base, w, bars))
+        cov.append(_coverage(c.base, w, bars, rates))
     return assets, w, cov, excluded
