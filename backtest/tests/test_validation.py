@@ -10,7 +10,7 @@ import pytest
 from backtest.config import Account, Costs, Params, Scenario, perturb
 from backtest.data import Candles
 from backtest.engine import Segment, simulate
-from backtest.funding import FundingTable, funding_stats
+from backtest.funding_cost import FundingTable, funding_stats
 from backtest.runner import DEV, RESERVED, run_all
 from backtest.signals import Indicators, Signal, compute_indicators, generate_signals
 from backtest.tests.helpers import ACCOUNT, PARAMS, ZERO_COSTS, random_walk, synthetic_dataset

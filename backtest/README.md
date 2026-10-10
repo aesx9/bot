@@ -18,8 +18,9 @@ importa nada de `src/copybot`. El resultado y el veredicto están en [`REPORT.md
 | `datos/` | Velas 4h (`trade`) y funding horario descargados, más `manifest.json` con hashes |
 | `resultados/` | CSV de operaciones por tramo y escenario de funding |
 | `REPORT.md` | Informe generado (no editar a mano) |
-| `*.py` | `data` (descarga/validación), `indicators`, `signals`, `engine` (cartera), `funding`, `metrics`, `validation` (corte, robustez, azar), `runner`, `report`, `cli` |
+| `*.py` | `data` (descarga/validación), `indicators`, `signals`, `engine` (cartera), `funding_cost`, `metrics`, `validation` (corte, robustez, azar), `runner`, `report`, `cli` |
 | `tests/` | Tests sin red (`make test`) |
+| `funding/` | Backtest independiente de arbitraje de funding (ver [`funding/README.md`](funding/README.md)) |
 
 ## Disciplina de validación
 

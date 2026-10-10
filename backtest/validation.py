@@ -19,7 +19,7 @@ from backtest.config import (
 )
 from backtest.data import Candles
 from backtest.engine import Segment, simulate
-from backtest.funding import FundingTable, percentile
+from backtest.funding_cost import FundingTable, percentile
 from backtest.signals import Indicators, Signal, generate_signals
 
 Tables = Mapping[Scenario, Mapping[str, FundingTable]]

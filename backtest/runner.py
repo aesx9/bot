@@ -21,7 +21,7 @@ from backtest.config import (
 )
 from backtest.data import Candles, FundingSeries, load_candles, load_funding
 from backtest.engine import RunResult, Segment, simulate
-from backtest.funding import FundingStats, FundingTable, funding_stats
+from backtest.funding_cost import FundingStats, FundingTable, funding_stats
 from backtest.metrics import BuyHold, Stats, buy_and_hold, summarize
 from backtest.signals import Indicators, compute_indicators, generate_signals
 from backtest.validation import (

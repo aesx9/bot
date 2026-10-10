@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from backtest.config import DAY_MS, Account, Costs
 from backtest.data import Candles
 from backtest.engine import Segment, Trade
-from backtest.funding import FundingTable
+from backtest.funding_cost import FundingTable
 
 TRADING_DAYS = 365  # perpetuos cripto: 24/7
 

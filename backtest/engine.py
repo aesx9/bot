@@ -25,7 +25,7 @@ from dataclasses import dataclass
 
 from backtest.config import CANDLE_MS, Account, Costs, Params, Scenario
 from backtest.data import Candles
-from backtest.funding import FundingTable
+from backtest.funding_cost import FundingTable
 from backtest.signals import Signal
 
 

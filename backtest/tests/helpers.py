@@ -8,7 +8,7 @@ from collections.abc import Mapping, Sequence
 from backtest.config import CANDLE_MS, HOUR_MS, Account, Costs, Params, Scenario
 from backtest.data import Candles, FundingSeries
 from backtest.engine import RunResult, Segment, simulate
-from backtest.funding import FundingStats, FundingTable
+from backtest.funding_cost import FundingStats, FundingTable
 from backtest.signals import Signal
 
 T0 = 1_700_000_000_000 - (1_700_000_000_000 % CANDLE_MS)  # múltiplo de 4h

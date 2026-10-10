@@ -6,7 +6,7 @@ import pytest
 
 from backtest.config import CANDLE_MS, HOUR_MS, Scenario
 from backtest.data import FundingSeries
-from backtest.funding import FundingStats, FundingTable, funding_stats, percentile
+from backtest.funding_cost import FundingStats, FundingTable, funding_stats, percentile
 from backtest.signals import Signal
 from backtest.tests.helpers import T0, flat, make_candles, no_funding, run
 
