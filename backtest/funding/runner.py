@@ -18,6 +18,7 @@ from backtest.funding.config import (
     RISK_FREE,
     ROBUSTNESS_PCT,
     THRESHOLDS,
+    TRANSFER_DELAY_HOURS,
     Account,
     Costs,
     Criteria,
@@ -53,6 +54,7 @@ def spec_a(account: Account, costs: Costs) -> Spec:
         rebalance=True,
         rebalance_trigger=REBALANCE_TRIGGER,
         transfer_cost=costs.transfer_usd,
+        transfer_delay_hours=TRANSFER_DELAY_HOURS,
         initial_transfers=1,
     )
 

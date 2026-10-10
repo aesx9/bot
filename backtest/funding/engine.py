@@ -19,6 +19,8 @@ Orden de cada hora ``i`` (``t[i]`` es su inicio):
 3. Funding de la hora ``i`` sobre las posiciones que siguen abiertas (precio de referencia: la
    apertura de la hora).
 4. Valoración al cierre (curva de capital) y, en A, reequilibrio de margen entre plataformas.
+   El importe transferido llega ``transfer_delay_hours`` horas después (al cierre de esa hora);
+   en tránsito no es margen de ninguna cuenta, pero sí forma parte del capital total.
 
 Ambas piernas tienen la misma cantidad de activo base, de modo que el resultado por precio es
 exactamente la variación de la base entre las dos piernas (``resultado por base``).
@@ -72,6 +74,7 @@ class Spec:
     rebalance: bool = False
     rebalance_trigger: float = 0.5
     transfer_cost: float = 0.0
+    transfer_delay_hours: int = 0  # horas que tarda en llegar un reequilibrio (0 = instantáneo)
     initial_transfers: int = 0
     max_positions: int = MAX_POSITIONS
 
@@ -213,6 +216,7 @@ class _State:
     open: list[_Open] = field(default_factory=list)
     closed: list[Position] = field(default_factory=list)
     liquidations: list[Liquidation] = field(default_factory=list)
+    in_transit: list[tuple[int, str, float]] = field(default_factory=list)  # (llega en i, a, USD)
 
 
 def _legs(a: Asset) -> tuple[Leg, Leg]:
@@ -430,20 +434,28 @@ def simulate(
                     p.paid += pay
                 else:
                     p.received -= pay
-        # 4. valoración al cierre y reequilibrio
+        # 4. llegada de transferencias, valoración al cierre y reequilibrio
+        for tr in [tr for tr in st.in_transit if tr[0] <= i]:
+            st.cash[tr[1]] += tr[2]
+            st.in_transit.remove(tr)
         per_venue = {v: _venue_equity(st, assets, v, "c", i) for v in st.cash}
-        if spec.rebalance and len(per_venue) == 2:
+        if spec.rebalance and len(per_venue) == 2 and not st.in_transit:
             (v_lo, e_lo), (v_hi, e_hi) = sorted(per_venue.items(), key=lambda kv: kv[1])
             mean = (e_lo + e_hi) / 2.0
             if mean > 0.0 and e_lo < spec.rebalance_trigger * mean:
                 amount = (e_hi - e_lo) / 2.0
                 st.cash[v_hi] -= amount
-                st.cash[v_lo] += amount - spec.transfer_cost
+                per_venue[v_hi] -= amount
                 transfers += 1
                 transfer_cost += spec.transfer_cost
-                per_venue[v_hi] -= amount
-                per_venue[v_lo] += amount - spec.transfer_cost
-        equity.append(sum(per_venue.values()))
+                arrival = amount - spec.transfer_cost
+                if spec.transfer_delay_hours > 0:
+                    st.in_transit.append((i + spec.transfer_delay_hours, v_lo, arrival))
+                else:
+                    st.cash[v_lo] += arrival
+                    per_venue[v_lo] += arrival
+        pending = sum(tr[2] for tr in st.in_transit)
+        equity.append(sum(per_venue.values()) + pending)
 
     # Cierre forzoso al final del tramo, al cierre de la última vela (no es un ciclo completo).
     last = end - 1
@@ -452,8 +464,8 @@ def simulate(
         _close(st, assets, p, end, a.t[last] + HOUR_MS, (a.leg1.c[last], a.leg2.c[last]),
                (spec.slippage, spec.slippage), ExitReason.END)
         st.open.remove(p)
-    if equity:
-        equity[-1] = sum(st.cash.values())
+    if equity:  # una transferencia aún en tránsito sigue siendo capital
+        equity[-1] = sum(st.cash.values()) + sum(tr[2] for tr in st.in_transit)
 
     return RunResult(
         positions=st.closed,

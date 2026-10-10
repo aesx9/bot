@@ -48,5 +48,9 @@ de `src/copybot`. El resultado y el veredicto quedan en [`REPORT.md`](REPORT.md)
 - Transferencia entre plataformas (A): **3 USD por movimiento**, al empezar cada tramo y en cada
   reequilibrio. El informe muestra el número de transferencias y su coste total en cada estrategia.
 - Reequilibrio (A): si una plataforma baja del 50 % de la media de las dos al cierre de una hora.
+- **El reequilibrio no es instantáneo**: el importe sale de la plataforma con más capital al cierre
+  de la hora `i` y llega al cierre de la hora `i + 2` (2 horas). Mientras viaja no cuenta como
+  margen en ninguna plataforma (ni para abrir posiciones ni frente a la liquidación), sí en el
+  capital total, y no se lanza otro reequilibrio hasta que llega.
 - Reserva del 2 % de cada cuenta para comisiones y funding al dimensionar el nocional.
 - Spot de B: índice spot de la API de gráficos de Kraken Futures como aproximación.

@@ -15,6 +15,7 @@ from backtest.funding.config import (
     MAX_POSITIONS,
     MEAN_HOURS,
     REBALANCE_TRIGGER,
+    TRANSFER_DELAY_HOURS,
     Account,
     Costs,
     Strategy,
@@ -277,7 +278,9 @@ def _rules(r: StrategyResult, meta: Meta) -> list[str]:
                  f"Hyperliquid cuesta 1 USDC; la de Kraken no está verificada)**, al empezar "
                  f"cada tramo y en cada reequilibrio. Reequilibrio: si al cierre de una hora "
                  f"una plataforma tiene menos del {pct(REBALANCE_TRIGGER, 0)} de la media de "
-                 f"las dos, se transfiere la mitad de la diferencia (instantáneo).")
+                 f"las dos, se transfiere la mitad de la diferencia; **el importe tarda "
+                 f"{TRANSFER_DELAY_HOURS} h en llegar y mientras tanto no cuenta como margen en "
+                 f"ninguna plataforma** (no se lanza otro reequilibrio hasta que llega).")
     else:
         rule = (f"Entra si la media de {MEAN_HOURS} h del funding de Kraken, anualizada, supera "
                 f"{pct(th.entry, 0)} (los largos pagan): largo spot + corto perpetuo. Sale si "

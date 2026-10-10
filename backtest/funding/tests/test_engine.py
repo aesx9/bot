@@ -200,6 +200,43 @@ def test_margin_rebalance_moves_half_the_gap_and_pays_the_transfer() -> None:
     assert r.equity[-1] - r.initial_capital == pytest.approx(p.net_pnl - 10.0)
 
 
+def _delayed_spec(delay: int) -> Spec:
+    spec = make_spec(rebalance=True, transfer_cost=5.0, initial_transfers=1)
+    return type(spec)(**{**spec.__dict__, "transfer_delay_hours": delay})
+
+
+def test_rebalance_transfer_takes_two_hours_and_is_not_margin_meanwhile() -> None:
+    prices2 = [100.0 if i < 30 else 220.0 for i in range(N)]
+    # Sale de v1 al cierre de la hora 30 y llega a v2 al cierre de la 32. Un máximo de 290 en la
+    # pierna corta liquida v2 sin los 175 USD en tránsito (800 − 3·290 < 0,03·290) y no con ellos.
+    in_transit = spread_asset("X", [hourly(0.4)] * N, prices2=prices2, highs2={31: 290.0})
+    r = _run([in_transit], spec=_delayed_spec(2))
+    (liq,) = r.liquidations
+    assert liq.venue == "v2" and liq.t == in_transit.t[31]
+    assert _run([in_transit], spec=_delayed_spec(0)).liquidations == []  # instantáneo: no
+    arrived = spread_asset("X", [hourly(0.4)] * N, prices2=prices2, highs2={33: 290.0})
+    r = _run([arrived], spec=_delayed_spec(2))
+    assert r.liquidations == []
+    # Un solo reequilibrio aunque v2 siga por debajo del umbral mientras el importe viaja; en
+    # tránsito sigue contando en el capital total.
+    assert r.transfers == 2
+    (p,) = r.positions
+    assert r.equity[-1] - r.initial_capital == pytest.approx(p.net_pnl - 10.0)
+    flat = _run([spread_asset("X", [hourly(0.4)] * N, prices2=prices2)], spec=_delayed_spec(2))
+    instant = _run([spread_asset("X", [hourly(0.4)] * N, prices2=prices2)],
+                   spec=_delayed_spec(0))
+    assert flat.equity == pytest.approx(instant.equity)
+
+
+def test_transfer_still_in_transit_at_the_end_counts_as_capital() -> None:
+    prices2 = [100.0 if i < 30 else 220.0 for i in range(N)]
+    a = spread_asset("X", [hourly(0.4)] * N, prices2=prices2)
+    r = _run([a], spec=_delayed_spec(2), end=32)  # la transferencia llegaría al cierre de la 32
+    assert r.transfers == 2
+    (p,) = r.positions
+    assert r.equity[-1] - r.initial_capital == pytest.approx(p.net_pnl - 10.0)
+
+
 def test_no_rebalance_when_disabled() -> None:
     prices2 = [100.0 if i < 30 else 220.0 for i in range(N)]
     a = spread_asset("X", [hourly(0.4)] * N, prices2=prices2)

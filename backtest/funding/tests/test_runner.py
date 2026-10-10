@@ -60,6 +60,7 @@ def test_spec_a_splits_margin_after_the_initial_transfer() -> None:
     assert s.initial == {"kraken_futures": 273.5, "hyperliquid": 273.5}
     assert s.notional == pytest.approx(2.0 * 273.5 / 3 / 1.02)
     assert s.initial_transfers == 1 and s.transfer_cost == 3.0 and s.rebalance and s.two_sided
+    assert s.transfer_delay_hours == 2
 
 
 def test_spec_b_half_spot_half_margin_one_sided() -> None:

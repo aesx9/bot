@@ -62,6 +62,10 @@ COST_BUFFER = 0.02
 # - A: si al cierre de una hora el capital de una plataforma cae por debajo del 50 % de la media
 #   de las dos, se transfiere la mitad de la diferencia (una transferencia, con su coste fijo).
 REBALANCE_TRIGGER = 0.50
+# - A: el importe del reequilibrio tarda 2 horas en llegar. Sale de la plataforma con más capital
+#   al cierre de la hora ``i`` y se abona al cierre de la hora ``i + 2``; mientras tanto no cuenta
+#   como margen en ninguna plataforma (sí en el capital total) y no se lanza otro reequilibrio.
+TRANSFER_DELAY_HOURS = 2
 
 
 @dataclass(frozen=True)
