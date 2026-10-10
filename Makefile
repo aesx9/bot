@@ -14,8 +14,8 @@ install:
 	$(PY) -m pip install --require-hashes --no-deps -r requirements.lock -r requirements-dev.lock
 
 lint:
-	$(PY) -m ruff check src tests $(wildcard scripts)
-	$(PY) -m mypy src
+	$(PY) -m ruff check src tests $(wildcard scripts) backtest
+	$(PY) -m mypy src backtest
 
 test:
 	$(PY) -m pytest
