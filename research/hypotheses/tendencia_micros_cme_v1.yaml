@@ -1,0 +1,774 @@
+id: tendencia-micros-cme-v1
+version: 1
+status: definitivo_pendiente_de_aprobacion
+created_utc_date: "2026-10-11"
+path_base: >
+  Todas las rutas de este documento son relativas a la raíz del repositorio
+  github.com/aesx9/bot y empiezan por research/. En la copia de trabajo local,
+  research/ corresponde a la carpeta de investigación.
+freeze_rule: >
+  Este fichero no se edita al aprobarse. La congelación consiste en registrar
+  en research/decisions/decision_log.md la aprobación expresa de Llorenç junto
+  con el SHA-256 de este fichero. Cualquier cambio posterior exige un
+  experiment_id nuevo.
+decision_history: "research/hypotheses/tendencia_micros_cme_v1_decisiones_pendientes.md (decisiones 0 a 17 y R1 a R7 del 2026-10-11)"
+live_trading: false
+paper_trading: false
+interval_convention: "Fechas en días de sesión; intervalos [inicio, fin) salvo que se indique lo contrario."
+
+purpose: >
+  Determinar si una implementación concreta de tendencia con contratos
+  enteros de micros CME negociados en Kraken (cuenta del EEE) es viable para
+  una cuenta de 25.000 EUR, después de costes taker, restricciones de tamaño
+  y criterios de riesgo fijados antes de observar resultados. Es un motor de
+  evaluación, no un optimizador. No autoriza paper ni dinero real.
+
+family:
+  name: tendencia
+  same_family_as: [trend-daily-sma200, trend-4h-core, trend-4h-volatile]
+  counts_as_new_family: false
+  trial_number: 53
+  inventory: "research/trials_inventory.csv (52 ensayos antes de este)"
+
+hypothesis:
+  statement: >
+    Una cartera de tendencia temporal (signo del rendimiento acumulado en 21,
+    63 y 252 sesiones) sobre EUR/USD, GBP/USD, AUD/USD y oro, con un contrato
+    como máximo por mercado, cumple los criterios de riesgo y rentabilidad
+    neta preregistrados con costes taker.
+  differentiation: >
+    El posible valor de la tendencia procede de la amplitud entre clases de
+    activo (divisas y oro en esta versión), no solo de la capacidad de hacer
+    timing en un activo individual. En BTC/ETH la SMA200 no superó a señales
+    aleatorias con la misma exposición; aquí no se repite esa pregunta.
+  economic_rationale: >
+    Implementación de una prima documentada (Hurst, Ooi y Pedersen, 2017,
+    tendencia en 67 mercados desde 1880; Moskowitz, Ooi y Pedersen, 2012).
+    No se presenta como descubrimiento de una anomalía nueva.
+  expected_power: >
+    Con una Sharpe hipotética de 0,2 a 0,3 no se espera evidencia estadística
+    concluyente. La decisión se basa en criterios de riesgo, costes, robustez
+    y viabilidad. Una rentabilidad histórica positiva no es evidencia
+    suficiente de una prima futura.
+
+prior_knowledge_and_contamination:
+  - "52 ensayos previos en research/trials_inventory.csv; este es el 53."
+  - "No se ha descargado, abierto ni visto ningún precio, rentabilidad ni volatilidad de 6E, 6B, 6A, GC, M6E, M6B, M6A, 1OZ ni EUR/USD del BCE en este proyecto."
+  - "Las volatilidades por contrato del traspaso (M6E 980, M6B 660, M6A 700, 1OZ 760 USD al año) y los costes en unidades de Sharpe son supuestos previos, no mediciones. No se usan como parámetros."
+  - "Con esos supuestos se calculó a mano, sin datos, que algunos mercados podrían no alcanzar la banda de apertura. Se registró antes de fijar los pesos; los pesos no se eligieron para cambiar ese resultado."
+  - "Se conocen los resultados publicados de la literatura de tendencia, que motivan la hipótesis."
+  - "Especificaciones contractuales consultadas en fuentes públicas el 2026-10-11 (CME, presentaciones ante la CFTC, brokers). No sustituyen la puerta de Kraken."
+
+universe:
+  markets:
+    M6E: {underlying: "EUR/USD", micro_unit: "12.500 EUR", micro_usd_per_price_unit: 12500, micro_tick: 0.0001, micro_tick_usd: 1.25, class: divisas, pnl_source_contract: 6E, source_unit: "125.000 EUR"}
+    M6B: {underlying: "GBP/USD", micro_unit: "6.250 GBP", micro_usd_per_price_unit: 6250, micro_tick: 0.0001, micro_tick_usd: 0.625, class: divisas, pnl_source_contract: 6B, source_unit: "62.500 GBP"}
+    M6A: {underlying: "AUD/USD", micro_unit: "10.000 AUD", micro_usd_per_price_unit: 10000, micro_tick: 0.0001, micro_tick_usd: 1.00, class: divisas, pnl_source_contract: 6A, source_unit: "100.000 AUD"}
+    1OZ: {underlying: "oro", micro_unit: "1 onza troy", micro_usd_per_price_unit: 1, micro_tick: 0.25, micro_tick_usd: 0.25, class: oro, pnl_source_contract: GC, source_unit: "100 onzas troy"}
+  specification_status: >
+    Especificaciones de CME según fuentes públicas consultadas el 2026-10-11.
+    Quedan sujetas a la puerta de Kraken (gates.kraken_instruments). Si el
+    instrumento de Kraken no coincide, el protocolo no es ejecutable.
+  excluded_from_principal:
+    10Y:
+      reason: >
+        Sin confirmación de que Kraken lo ofrezca en el EEE, ni de su símbolo,
+        especificación y base de comisión. Según CME, 10Y es Micro 10-Year
+        Yield (cotiza en rendimiento, 10 USD por pb, liquidación en efectivo),
+        no un futuro de bono.
+      no_proxy_substitution: "No se sustituye por FRED DGS10. No se calcula ningún escenario de comisión del 10Y."
+      re_entry: "Solo con un prerregistro nuevo y otro experiment_id."
+    out_of_risk_budget: [MES, MNQ, MYM, M2K, MGC, NKD, MCL]
+    out_of_risk_budget_rule: "Exclusión fija ex ante con riesgos supuestos. No se reincluyen en función de resultados."
+  cost_based_exclusion: none
+  cost_based_exclusion_note: >
+    Opción C: no se usa un prior de Sharpe para excluir mercados. Los costes
+    taker se cobran íntegros en la simulación. El cociente coste anual taker /
+    riesgo anual del contrato se informa como diagnóstico. Ese cociente
+    aproxima la erosión anual en unidades de volatilidad; no es una Sharpe
+    observada ni una estimación de la futura.
+  fixed_universe: true
+
+data:
+  separation:
+    signal: "Cadena de liquidaciones diarias de contratos estándar individuales (6E, 6B, 6A, GC), rendimientos medidos siempre dentro del mismo contrato."
+    pnl: "Cambio de liquidación diaria del contrato estándar mantenido x unidad micro en USD (proxy sintético del micro)."
+    costs: "Supuestos de comisión y tick (sección costs), no observados en los datos."
+    conversion: "Tipo de referencia EUR/USD del BCE."
+    unverifiable_approximations: [fills a la liquidación diaria, spread y deslizamiento de 1 tick, equivalencia micro y estándar en precio, GC como proxy del 1OZ]
+  sources:
+    futures:
+      provider: Norgate Data (paquete de futuros)
+      content: "Contratos individuales 6E, 6B, 6A y GC, incluidos los vencidos, con precio de liquidación diaria."
+      budget: "Hasta 150 USD por 6 meses. Una suscripción de 12 meses (hasta 270 USD) requiere autorización expresa antes de contratar."
+      terms_check_before_purchase: "Confirmar condiciones de exportación y uso interno de los ficheros históricos."
+      free_trial_not_sufficient: "La prueba gratuita limita los futuros diarios a dos años y no sirve para verificar la cobertura."
+      no_intraday: "No se dispone de datos intradía ni de ticks."
+      stop_rule: >
+        Si la fuente no ofrece contratos individuales vencidos con liquidación
+        diaria desde 2007-06-01, o sus condiciones no permiten este uso, o el
+        coste supera el presupuesto aprobado: detener y pedir aprobación para
+        un experimento proxy separado.
+    eur_usd:
+      provider: BCE, tipos de cambio de referencia (serie EXR.D.USD.EUR.SP00.A, USD por EUR)
+      publication: "Hacia las 16:00 CET de cada día TARGET."
+    one_oz_settlements:
+      use: "Solo diagnóstico preregistrado (comparación con el proxy GC) si la fuente las ofrece. Nunca sustituye al caso principal."
+    forbidden_sources_for_pnl: ["series continuas de fuente desconocida (por ejemplo 6E=F, GC=F)", "FRED DGS10"]
+  storage:
+    raw: research/data/raw/tendencia_micros_cme_v1/
+    processed: research/data/processed/tendencia_micros_cme_v1/
+    audit: research/data/audit/tendencia_micros_cme_v1/
+    in_git: false
+  settlement_field: >
+    Se usa el precio de liquidación diaria oficial. Si la fuente solo ofrece
+    un cierre que no es la liquidación, se detiene y se pide decisión.
+  no_fill: "No se rellenan, interpolan ni arrastran huecos de precios ni de tipos de cambio."
+  missing_settlement_with_open_position:
+    rule: >
+      Si falta la liquidación de una sesión esperada del contrato en el que
+      hay posición abierta (incluido el saliente en la sesión de rollover), no
+      se contabiliza un P&L cero ni se compensa después con un movimiento
+      acumulado. Se intenta recuperar la liquidación oficial de ese contrato y
+      esa sesión en la fuente alternativa autorizada, sin interpolar. Si se
+      recupera, se usa y se registra su procedencia. Si no se recupera, la
+      evaluación es NO_EJECUTABLE.
+    authorized_alternative_source: >
+      Únicamente la liquidación diaria oficial publicada por CME Group para el
+      mismo contrato y la misma sesión (registros de liquidación de CME,
+      incluido CME DataMine). Si obtenerla tiene coste, requiere autorización
+      expresa de gasto antes de contratarla. Ninguna otra fuente sustituye la
+      liquidación.
+    official_closure_is_not_missing: >
+      Una sesión que el calendario oficial del producto marca como cerrada no
+      es una ausencia: no hay liquidación que recuperar y no hay P&L de esa
+      sesión.
+    record: "Cada liquidación recuperada se guarda con su fuente, fecha de obtención y SHA-256."
+  required_coverage:
+    first_required_session: "2007-06-01"
+    last_session: "2026-09-30"
+    in_position: >
+      Cero ausencias no recuperadas en las sesiones esperadas de cualquier
+      contrato mientras tiene posición abierta (regla
+      missing_settlement_with_open_position).
+    signal_only_when_flat:
+      max_consecutive_missing_expected_sessions: 5
+      max_missing_fraction_per_calendar_year: 0.02
+      scope: >
+        Límites para señales y riesgo de un mercado sin posición abierta en ese
+        contrato. Se cuentan por contrato de la cadena y por año natural.
+    chain_completeness: "Cada contrato de la cadena tiene liquidación en todas las sesiones esperadas desde 10 sesiones antes de entrar en la cadena hasta su fecha de rollover inclusive, salvo ausencias permitidas por signal_only_when_flat en sesiones sin posición."
+  calendar:
+    sources: "Calendarios oficiales de festivos y especificaciones de CME, con versión y fecha de consulta registradas en la auditoría."
+    helper_library: "pandas_market_calendars con versión fijada en requirements; es una ayuda y no sustituye las reglas de cada contrato."
+    official_close_vs_missing: >
+      Una sesión que el calendario oficial marca como cerrada no es una
+      ausencia. Una sesión esperada sin liquidación es una ausencia y cuenta
+      para los límites de cobertura.
+  sealed_holdouts:
+    registry:
+      ml-daily-direction-multiasset-v4:
+        holdout: "[2025-07-01, 2026-07-01)"
+        evidence: "research/hypotheses/ml_daily_direction_multiasset_v4.yaml (validation.final_holdout.period); research/pipeline_v4/walkforward.py (HOLDOUT_BLOCK) y research/pipeline_v4/evaluate.py (valoración hasta 2026-06-30, fin exclusivo 2026-07-01)."
+        lock: "research/data/processed/v4/HOLDOUT_UNLOCK y research/data/processed/v4/holdout_runs.jsonl."
+      funding-carry-cross-sectional-v1:
+        holdout_decisions: "Lunes del 2025-10-06 al 2026-09-28 (52 decisiones semanales)."
+        holdout_results_end: "2026-10-05 (fin del periodo de P&L de la última decisión semanal; último dato válido 2026-10-05T00:00:00Z)."
+        difference: >
+          2026-09-28 es la última fecha de decisión; la posición abierta ese
+          lunes se mantiene una semana, así que el periodo de resultados del
+          holdout termina el 2026-10-05. Son dos fechas distintas del mismo
+          holdout, no una discrepancia.
+        evidence: "research/hypotheses/funding_carry_cross_sectional_v1.yaml (sample.holdout y data.last_valid_data_utc); research/funding_carry_v1/config.py (HOLDOUT_START 2025-10-06, HOLDOUT_LAST_DECISION 2026-09-28, DATA_END 2026-10-05)."
+        lock: "research/data/processed/funding_carry_v1/HOLDOUT_UNLOCK."
+      verification_method: "Contrastado el 2026-10-11 solo con metadatos (YAML) y código; no se abrió ningún dato ni artefacto protegido."
+    scope_finding: >
+      Los holdouts de ml-daily-direction-multiasset-v4 y de
+      funding-carry-cross-sectional-v1 se protegen con ficheros de desbloqueo
+      y fechas dentro de sus propios directorios y se aplican a sus propios
+      datos cripto. Ningún validador define una protección global por fecha.
+    rule: >
+      Este experimento no abre, lee ni reutiliza ningún fichero ni resultado
+      de esos experimentos. Los datos de divisas y oro de 2025 y 2026 se
+      denominan "evaluación histórica no inspeccionada", no datos posteriores
+      a la congelación.
+  paths:
+    convention: "Rutas literales relativas a la raíz del repositorio. Una ruta que termina en / cubre todo su contenido; las demás son ficheros concretos."
+    matching: >
+      La comparación es por segmentos de ruta, nunca por prefijo de texto. Para
+      cada ruta que el código vaya a abrir o escribir: (1) se convierte a ruta
+      relativa a la raíz del repositorio con separador /; (2) se rechaza si es
+      absoluta, si contiene un segmento .. o si sale de la raíz; (3) se
+      rechaza si algún componente es un enlace simbólico o un enlace duro;
+      (4) se compara segmento a segmento, sin distinguir mayúsculas de
+      minúsculas (el proyecto se trabaja en Windows y en Linux), de modo que
+      research/data/audit/tendencia_micros_cme_v1_bak/x no coincide con la
+      excepción research/data/audit/tendencia_micros_cme_v1/.
+    precedence: >
+      Una ruta solo se puede leer si coincide con allowed_read_paths y, cuando
+      cae bajo prohibited_read_paths, además coincide exactamente con una
+      excepción de prohibited_read_exceptions por segmentos. La prohibición
+      gana ante cualquier duda: una ruta que no se pueda normalizar se
+      rechaza.
+    allowed_read_paths:
+      - research/data/raw/tendencia_micros_cme_v1/
+      - research/data/processed/tendencia_micros_cme_v1/
+      - research/data/audit/tendencia_micros_cme_v1/
+      - research/hypotheses/tendencia_micros_cme_v1.yaml
+      - research/trials_inventory.csv
+    prohibited_read_paths:
+      - research/data/processed/v4/
+      - research/data/processed/funding_carry/
+      - research/data/processed/funding_carry_v1/
+      - research/data/processed/sma200_v1/
+      - research/data/raw/kraken_ohlcvt_2026Q2/
+      - research/data/raw/kraken_funding_export/
+      - research/data/raw/kraken_futures_backfill_2026-10-10/
+      - research/data/raw/treasury_bill_rates/
+      - research/data/audit/
+    prohibited_read_exceptions:
+      - research/data/audit/tendencia_micros_cme_v1/
+    authorized_write_paths:
+      - research/data/raw/tendencia_micros_cme_v1/
+      - research/data/processed/tendencia_micros_cme_v1/
+      - research/data/audit/tendencia_micros_cme_v1/
+    rule: >
+      El código del experimento solo lee rutas de allowed_read_paths y solo
+      escribe en authorized_write_paths, con la comparación de matching y
+      precedence. Los holdouts sellados y sus artefactos (HOLDOUT_UNLOCK,
+      holdout_runs.jsonl, predicciones y evaluaciones) quedan dentro de las
+      rutas prohibidas sin excepción: ninguna excepción de lectura cubre
+      research/data/processed/v4/, research/data/processed/funding_carry/,
+      research/data/processed/funding_carry_v1/ ni
+      research/data/processed/sma200_v1/.
+    single_exception_rationale: >
+      La única excepción es research/data/audit/tendencia_micros_cme_v1/,
+      necesaria porque research/data/audit/ está prohibida en bloque y la
+      auditoría propia vive dentro. No se añaden más excepciones: cualquier
+      excepción nueva exige un prerregistro nuevo.
+    inventory_note: >
+      research/trials_inventory.csv es la ruta en el repositorio. Mientras el
+      .gitignore raíz excluya *.csv, el fichero existe solo en la copia de
+      trabajo; su inclusión en el repositorio está pendiente de decisión.
+  sha256_of_every_raw_file: true
+
+contracts_and_rollover:
+  fx_6e_6b_6a:
+    cycle: "Trimestral H, M, U, Z."
+    last_trading_day_cme: "2 días hábiles antes del tercer miércoles del mes del contrato."
+    settlement_cme_vs_kraken: >
+      La especificación pública de CME contempla entrega física para algunos
+      futuros de divisas (por ejemplo M6E). La documentación pública general
+      de Kraken describe sus futuros TradFi de plazo fijo como liquidados en
+      efectivo. No se supone ninguna de las dos cosas para la posición de la
+      cuenta del EEE: la puerta de Kraken debe confirmar, para el instrumento
+      exacto, la forma de liquidación, el vencimiento, los cierres automáticos
+      y las restricciones. En ningún caso se mantiene una posición hasta el
+      vencimiento ni hasta una fecha de cierre automático: siempre se hace el
+      rollover antes.
+    roll_session: >
+      La más temprana de: (a) 5 sesiones antes del último día de negociación
+      de CME; (b) 1 sesión antes de la primera fecha en que Kraken restrinja
+      el instrumento exacto de la cuenta (solo cierre, cierre automático,
+      liquidación, vencimiento o cualquier otra restricción), confirmada en la
+      puerta.
+    next_contract: "Siguiente vencimiento trimestral."
+  gold_gc_proxy_for_1oz:
+    cycle: "Meses pares: G, J, M, Q, V, Z (los del 1OZ)."
+    last_trading_day_1oz_cme: "Tercer último día hábil del mes anterior al mes del contrato."
+    settlement_cme_vs_kraken: >
+      Según CME, el 1OZ se liquida en efectivo contra el GC. La liquidación,
+      el vencimiento, los cierres automáticos y las restricciones del
+      instrumento exacto de la cuenta del EEE deben confirmarse en la puerta
+      de Kraken. Nunca se mantiene la posición hasta el vencimiento.
+    roll_session: >
+      La más temprana de: (a) 5 sesiones antes del último día de negociación
+      del 1OZ del mismo mes; (b) 1 sesión antes de la primera fecha en que
+      Kraken restrinja el instrumento exacto de la cuenta, confirmada en la
+      puerta. Queda antes del primer día de aviso del GC.
+    next_contract: "Siguiente mes par."
+    proxy_note: >
+      El 1OZ se liquida en efectivo contra la liquidación del GC; el P&L por
+      onza del GC es un proxy homogéneo durante todo el periodo, sin empalmar
+      niveles de precio de GC y 1OZ. El 1OZ cotiza solo desde 2025.
+  kraken_dates_override: "Las fechas de CME no se dan por fechas efectivas de Kraken sin confirmación en la puerta."
+  roll_execution:
+    always_two_legs: >
+      En la sesión de rollover R, si la posición mantenida q es distinta de 0,
+      se cierra q en el contrato saliente a S_R(saliente) y se abre la
+      posición vigente en el entrante a S_R(entrante), aunque objetivo - q = 0
+      en exposición de mercado. Son dos operaciones reales con sus costes.
+      Si q = 0 y el objetivo es 0, no hay operación.
+    netting_with_signal_change: >
+      Si en R también hay una orden pendiente de ejecución (cambio de señal),
+      la sesión se resuelve con una sola pareja de operaciones: cierre de |q|
+      contratos en el saliente y apertura de |objetivo| contratos en el
+      entrante. Ejemplos: mantener +1 en R: 1 cierre y 1 apertura (2
+      contratos); reverso de +1 a -1 en R: 1 cierre en el saliente y 1
+      apertura en el entrante (2 contratos, no 4); cierre de +1 a 0 en R: 1
+      cierre y ninguna apertura; entrada de 0 a +1 en R: 1 apertura en el
+      entrante. Nunca se cobra un rollover y un cambio de señal por separado.
+    contracts_traded_on_R: "|q| en el saliente + |objetivo| en el entrante."
+    missing_settlement_on_R: >
+      Saliente con posición abierta: su liquidación en R es obligatoria (regla
+      data.missing_settlement_with_open_position). Si falta y no se recupera
+      de la fuente alternativa autorizada, la evaluación es NO_EJECUTABLE; no
+      se aplaza el rollover ni se inventa un cierre. Entrante: si falta su
+      liquidación en R y no se recupera, se cierra el saliente y la posición
+      queda en 0; la apertura en el entrante queda pendiente según
+      execution.order_cycle (con posición 0 no hay P&L que contabilizar).
+    record: "Se registran fecha, contrato, cantidad, precio y costes de cada pata."
+  micro_history_label: >
+    Todo el historial usa contratos estándar como proxy sintético del micro.
+    El tramo anterior al lanzamiento de los micros de divisas (2009, fecha
+    exacta a registrar en la auditoría) y del 1OZ (2025) es un proxy de un
+    instrumento que no existía. Los costes modelados son los del micro.
+
+signal:
+  chain_return: >
+    Para cada mercado, c(d) es el contrato de la cadena al cierre de la sesión
+    d según contracts_and_rollover. Rendimiento de la sesión d:
+    r(d) = S_d(c(d-1)) / S_{d-1}(c(d-1)) - 1, con S la liquidación y d-1 la
+    sesión válida anterior. Siempre se mide dentro del mismo contrato, así que
+    la cadena no tiene saltos artificiales de rollover. Usa el mismo calendario
+    de rollover que la posición.
+  windows_valid_observations: [21, 63, 252]
+  window_return: "Producto de (1 + r) de las últimas W observaciones válidas hasta la sesión t inclusive, menos 1."
+  sign: "+1 si > 0, -1 si < 0, 0 si es exactamente 0."
+  combination: "Media aritmética de los tres signos."
+  allowed_values: [-1.0, -0.6666666667, -0.3333333333, 0.0, 0.3333333333, 0.6666666667, 1.0]
+  missing_data: >
+    Con posición abierta en el contrato, la liquidación es obligatoria
+    (data.missing_settlement_with_open_position), así que esta regla solo se
+    aplica a un mercado sin posición. Sin liquidación en t: no hay señal nueva
+    para ese mercado en t. En la siguiente liquidación válida d', r(d') se
+    mide frente a la última liquidación válida del mismo contrato y cuenta
+    como una sola observación válida. No se rellena ni se interpola. Las
+    ausencias cuentan para data.required_coverage.signal_only_when_flat.
+  warmup: "Sin 252 rendimientos válidos, la señal no existe y la posición es 0."
+  costs_in_signal: false
+  parameter_optimization: prohibited
+
+risk_estimate:
+  daily_pnl_per_contract_usd: "x(d) = (S_d(c(d-1)) - S_{d-1}(c(d-1))) x micro_usd_per_price_unit."
+  estimator: "EWMA de x^2 sin restar la media: v(d) = lambda x v(d-1) + (1 - lambda) x x(d)^2, con lambda = 60/61 (centro de masa 60)."
+  zero_mean_hypothesis: >
+    Se supone media diaria cero en la estimación de riesgo. Es la convención
+    habitual para horizontes diarios; si la media no es cero, la EWMA mide el
+    segundo momento y sobrestima ligeramente la varianza.
+  initialization: "v en la observación válida 60 = media de x^2 de las 60 primeras observaciones válidas. Antes no hay estimación y la posición es 0."
+  annualization: "riesgo_anual_usd(t) = sqrt(v(t)) x sqrt(261)."
+  information_set: "Solo liquidaciones hasta la sesión t inclusive."
+  missing_observation: >
+    Solo puede ocurrir en un mercado sin posición abierta (con posición, la
+    liquidación es obligatoria o la evaluación es NO_EJECUTABLE). Si falta la
+    liquidación del contrato en una sesión esperada, v no se actualiza ese día
+    (se arrastra el último valor). En la siguiente
+    liquidación válida, x es el movimiento acumulado desde la última
+    liquidación válida del mismo contrato y se aplica una sola actualización.
+    No se reparte el movimiento entre días ni se imputa un cero. Limitación
+    declarada: tras un hueco, esa observación agrupa varios días y puede
+    sobrestimar ligeramente la varianza diaria.
+
+sizing:
+  capital_eur_initial: 25000
+  capital_basis: "Patrimonio vigente en EUR al cierre de t, convertido a USD con el tipo del BCE vigente en t."
+  vol_target: 0.06
+  idm: 1.5
+  weight_per_market: 0.25
+  weight_rule: "Peso fijo 0,25 para los cuatro mercados, fijado una vez al definir el universo. Sin renormalización por señales activas, huecos de datos ni exclusiones posteriores."
+  ideal_position: "ideal_i(t) = senal_i(t) x (0,06 x capital_usd(t) x 1,5 x 0,25) / riesgo_anual_usd_i(t)."
+  vol_target_note: >
+    El 6 % es el parámetro de dimensionamiento de referencia, no una garantía
+    de que la cartera alcance esa volatilidad. Con contratos enteros puede
+    quedar muy por debajo o por encima. Los criterios de volatilidad y
+    drawdown pueden rechazar la implementación.
+  max_contracts_per_market: 1
+  band:
+    open_if_abs_ideal_at_least: 0.6
+    close_if_abs_ideal_below: 0.4
+    band_parameters_fixed: true
+  per_market_target_from_current_position_q: >
+    q en {-1, 0, +1} es la posición realmente abierta en la sesión de
+    ejecución, antes de operar (execution.order_cycle).
+    (1) Si q = 0: objetivo = signo(ideal) si |ideal| >= 0,6;
+    si no, 0. (2) Si q != 0 y signo(ideal) = signo(q): objetivo = q si
+    |ideal| >= 0,4; si no, 0. (3) Si q != 0 y la señal es 0 o de signo
+    contrario: se cierra la posición existente; se abre la contraria
+    (objetivo = signo(ideal)) solo si |ideal| >= 0,6; si no, objetivo 0
+    (efectivo). Un reverso negocia 2 contratos.
+  fx_same_direction_limit:
+    max: 2
+    definition: "Largo en M6E, M6B o M6A = corto en USD; corto = largo en USD."
+    rule: >
+      En cada sesión de ejecución, tras calcular los objetivos candidatos de
+      los tres mercados de divisas (execution.order_cycle, paso 4), si más de
+      dos tienen objetivo distinto de cero en el mismo sentido frente al USD,
+      se asignan las dos plazas en este orden: (1) posiciones ya abiertas que
+      se mantienen en el mismo sentido (q = objetivo); (2) entre las restantes,
+      mayor |ideal| del registro que las gobierna; (3) empate: orden fijo M6E,
+      M6B, M6A. El mercado sin plaza queda con objetivo 0. Si era un reverso,
+      el cierre de la posición contraria se ejecuta igualmente y la nueva
+      entrada no. Cada bloqueo se registra.
+    consistency: "Como el límite se aplica en cada sesión, nunca hay tres posiciones abiertas en el mismo sentido que obliguen a cerrar una."
+  order_processing: >
+    Definido en execution.order_cycle. Las bandas y el límite de divisas se
+    aplican en la sesión de ejecución con la posición realmente abierta.
+    Cierres, reversos, entradas y patas de rollover se ejecutan a la misma
+    liquidación; no hay secuencia intradía.
+  portfolio_covariance:
+    role: "Solo diagnóstico en la versión principal. No hay recorte dinámico por contribución al riesgo."
+    design_note: "Un contrato por mercado no garantiza un riesgo agregado bajo; los criterios de volatilidad y drawdown son los que pueden rechazar."
+    estimator: "EWMA con centro de masa 60 del producto de P&L diarios en USD por contrato, media cero, con datos hasta t, por pares con observaciones en la misma sesión."
+    reported: [volatilidad ex ante de la cartera, contribución al riesgo por mercado, diferencia entre objetivo y volatilidad realizada]
+
+execution:
+  principal: "Retraso k = 1: el registro de señal de la sesión s se ejecuta en la 1.ª sesión esperada posterior (t+1)."
+  delay_variant: "Retraso k = 2: el registro de señal de la sesión s se ejecuta en la 2.ª sesión esperada posterior (t+2). Mide sensibilidad al retraso; no reconstruye órdenes post-only."
+  order_cycle:
+    applies_to: "Caso principal (k = 1) y variante (k = 2), con las mismas reglas; solo cambia k."
+    step_1_signal_record: >
+      En cada sesión s en la que el mercado tiene liquidación del contrato de
+      la cadena, se crea un registro R(s) con ideal(s) calculado con datos
+      hasta s (sizing.ideal_position; 0 si la señal o el riesgo no existen).
+      No se guarda un objetivo: la histéresis no se aplica en s. Si en s falta
+      la liquidación, no se crea registro.
+    step_2_scheduled_session: >
+      e_k(s) es la k-ésima sesión esperada del mercado posterior a s según el
+      calendario oficial del producto, con independencia de que tenga datos.
+    step_3_governing_record: >
+      En cada sesión esperada e, el registro que gobierna es G(e) = R(s*), con
+      s* la mayor fecha de señal tal que e_k(s*) <= e. Los registros con s < s*
+      quedan sustituidos y no se ejecutan nunca. Con k = 2, en e gobierna el
+      registro de s = e - 2 sesiones; el de e - 1 aún no ha vencido y no se
+      mira. Así hay como mucho un registro gobernante por mercado y sesión.
+    step_4_target_at_execution: >
+      Si G(e) no se ha aplicado todavía, el objetivo candidato se calcula en e
+      con ideal(s*) y con la posición q realmente abierta en e antes de operar
+      (después del paso de P&L de accounting_order), aplicando
+      sizing.per_market_target_from_current_position_q. Si G(e) ya se aplicó
+      en una sesión anterior, el objetivo es q (sin orden, salvo las patas de
+      un rollover). Después se aplica sizing.fx_same_direction_limit a los
+      tres mercados de divisas con sus candidatos de esa sesión (un mercado
+      sin registro nuevo aporta q como candidato).
+    step_5_execute: >
+      Orden = objetivo - q, ejecutada a la liquidación de e en el contrato que
+      corresponda; si e es sesión de rollover se aplica
+      contracts_and_rollover.roll_execution con una sola pareja de
+      operaciones. G(e) queda marcado como aplicado.
+    missing_settlement_at_execution: >
+      Con q distinto de 0 la liquidación de e es obligatoria
+      (data.missing_settlement_with_open_position). Con q = 0 y sin
+      liquidación del contrato a abrir en e (ni recuperada de la fuente
+      alternativa autorizada), no se ejecuta nada y G(e) queda sin aplicar. En
+      la siguiente sesión esperada con liquidación se repiten los pasos 3 a 5:
+      gobierna el registro vencido más reciente (que puede haber sustituido al
+      anterior) y se usa la q de ese momento. Cada aplazamiento y cada
+      sustitución se registran. No se inventan ejecuciones.
+    deadline: >
+      Un registro sin aplicar nunca abre posición en un contrato que ya ha
+      pasado su sesión de rollover: la apertura se hace en el contrato vigente
+      de la cadena en la sesión en que se ejecute.
+    determinism: >
+      Con los mismos datos, calendario y parámetros, la secuencia de registros,
+      sesiones programadas, sustituciones y operaciones es única. El código
+      guarda para cada registro s, e_k(s), la sesión en que se aplicó o el
+      motivo por el que se sustituyó.
+  post_only: "Fuera del criterio de aceptación. Sus ejecuciones reales se registrarán aparte si se autoriza paper."
+  no_invented_fills: "No se inventan fills, spreads ni datos intradía."
+
+costs:
+  status: >
+    PROVISIONAL a la fecha de este documento. Las tarifas contractuales se
+    verifican en la puerta de Kraken antes de descargar datos.
+  categories:
+    contractual_fees: >
+      Comisión de Kraken, base de nominal sobre la que se cobra y tasas de
+      bolsa, cámara y regulador aplicables al producto. Son verificables y
+      deben verificarse en la puerta de Kraken (gates.kraken_instruments)
+      antes de descargar o comprar datos de precios.
+    modeled_execution_costs: >
+      Spread y deslizamiento de 1 tick por lado. Es un supuesto de
+      modelización declarado, no una tarifa: con datos diarios no puede
+      verificarse. Se somete a la sensibilidad de 2 ticks por lado. Su
+      naturaleza modelada no impide por sí sola proponer paper.
+  principal_taker:
+    fee_per_contract_per_side: "0,0005 x nominal, con nominal = liquidación de ejecución x micro_usd_per_price_unit."
+    spread_and_slippage_per_contract_per_side: "1 tick del instrumento micro (M6E 1,25; M6B 0,625; M6A 1,00; 1OZ 0,25 USD)."
+    third_party_fees: >
+      No se suponen cero ni se suman por defecto. En la puerta se verifica qué
+      cargos se cobran realmente a la cuenta del EEE por el instrumento
+      exacto (comisión de Kraken y cualquier tasa de bolsa, cámara, regulador
+      u otra) con documentación de Kraken o evidencia de la cuenta. Solo se
+      suman las tasas adicionales documentadas como cobradas y aplicables al
+      producto concreto, por contrato y lado, registradas con su fuente antes
+      de descargar precios. Las tarifas publicadas de CME o NFA no se suman
+      solo porque Kraken no aclare si están incluidas.
+    total_contractual_cost_must_be_verified: >
+      Si no se puede verificar el coste contractual total por lado (comisión,
+      base de nominal y tasas adicionales efectivamente cobradas), la puerta
+      falla y no se descargan datos.
+    rollover: "Dos ejecuciones completas (cierre y apertura), cada una con comisión y tick."
+    reversal: "Dos contratos negociados."
+  fee_verification_rule: >
+    Se compara el coste contractual total verificado por lado (comisión más
+    tasas adicionales documentadas, sobre la base de nominal confirmada) con
+    el supuesto principal de 0,0005 x nominal. Si el verificado es mayor, el
+    protocolo no representa el coste real: no es ejecutable tal como está y
+    requiere un prerregistro nuevo antes de descargar precios. Si es menor o
+    igual, se mantiene el supuesto principal (conservador) y se informa del
+    verificado. Si no se puede verificar, la puerta falla.
+  provisional_label_rule: >
+    Se aplica solo a las tarifas contractuales. Si algún resultado se
+    calculase con una tarifa contractual sin verificar (no debería ocurrir,
+    porque la puerta lo impide), se etiqueta PROVISIONAL, no puede recibir el
+    veredicto APTA_PARA_PROPONER_PAPER y se registra como desviación del
+    protocolo. El supuesto de 1 tick no activa esta etiqueta: se declara como
+    supuesto modelado en todos los informes y se acompaña de su sensibilidad.
+  tick_sensitivity:
+    spread_and_slippage_ticks_per_side: 2
+    role: >
+      Sensibilidad informativa preregistrada del caso principal con 2 ticks
+      por lado en todas las ejecuciones (incluidos rollovers). Se informan
+      todas las métricas de acceptance_criteria. No es criterio de aceptación
+      ni vía alternativa de aprobación; si el veredicto cambiara con 2 ticks,
+      se declara expresamente en el informe y en la propuesta de paper.
+  diagnostics_not_for_acceptance:
+    maker_pct_nominal_per_side: 0.0002
+    per_contract_usd_per_side: 1.0
+    maker_rule: "Si la estrategia solo pasa con costes maker o por contrato, se rechaza."
+
+fx_conversion:
+  rate: "USD por EUR del BCE."
+  timing: >
+    Para la sesión d se usa el último tipo del BCE ya publicado antes de la
+    hora de liquidación de CME de esa sesión. El tipo del día d (16:00 CET) es
+    anterior a todas las liquidaciones de CME de d. Si el BCE no publica en d,
+    se usa el último tipo anterior disponible. Nunca un tipo posterior.
+  pnl_conversion: "P&L en EUR = P&L en USD / (USD por EUR). Conversión diaria; sin saldo en USD con exposición cambiaria."
+  costs_conversion: "Igual que el P&L, en la sesión de ejecución."
+
+accounting_and_metrics:
+  portfolio_calendar: >
+    Unión de las sesiones esperadas de los cuatro mercados. Un mercado con
+    cierre oficial ese día no aporta P&L. Un mercado sin posición abierta y
+    sin liquidación aporta P&L 0. Un mercado con posición abierta necesita su
+    liquidación (data.missing_settlement_with_open_position).
+  accounting_order: >
+    En cada sesión d de la cartera, en este orden: (1) P&L del intervalo: para
+    cada mercado, la posición q que estaba abierta durante el intervalo desde
+    su última liquidación válida hasta d, en el contrato en que estaba
+    abierta, genera q x (S_d - S_anterior) x micro_usd_per_price_unit, con
+    S_anterior la liquidación de ese mismo contrato en su sesión esperada
+    anterior. Con q distinto de 0 no se admite un P&L cero por ausencia de
+    S_d: S_d se recupera de la fuente alternativa autorizada o la evaluación
+    es NO_EJECUTABLE (data.missing_settlement_with_open_position). Un cierre
+    oficial del mercado no genera P&L. (2) Operaciones de la liquidación de d:
+    se ejecutan a S_d los cierres, aperturas, reversos y patas de rollover
+    programados para d, y se cobran sus costes en d. (3) La posición
+    resultante solo genera P&L a partir del intervalo siguiente; una apertura
+    a S_d no genera P&L en d. (4) Se calcula E(d). (5) Con datos hasta d se
+    calculan señales, riesgos y objetivos que se ejecutarán en sesiones
+    posteriores.
+  equity: "Patrimonio diario en EUR. E(d) = E(d-1) + P&L EUR(d) - costes EUR(d). E inicial = 25.000 EUR en la fecha de inicio de evaluación."
+  cash: "Las sesiones sin posición rinden 0. No se acreditan intereses del efectivo ni del margen."
+  daily_return: "R(d) = E(d) / E(d-1) - 1."
+  evaluation_start: "Primera sesión en la que los cuatro mercados tienen señal (252 rendimientos) y riesgo (60 observaciones) válidos."
+  evaluation_start_requirement: "Debe ser como muy tarde 2008-08-29 para cubrir el primer episodio. Si no, el protocolo no es ejecutable."
+  evaluation_end: "2026-09-30."
+  cagr: "(E_fin / E_inicio) ^ (365,25 / días naturales del periodo) - 1, en EUR, neta de costes."
+  rolling_vol_63: "Desviación típica (ddof = 1) de los últimos 63 rendimientos diarios x sqrt(261), en cada sesión con 63 rendimientos previos dentro del periodo. Se informan mediana y percentil 95."
+  max_drawdown: "max_d (1 - E(d) / max_{s <= d} E(s)) sobre el patrimonio diario."
+  gross_and_net: "Se informan resultados brutos y netos."
+  no_quote_episodes: "Las sesiones sin liquidación se cuentan y se informan por mercado."
+
+bootstrap:
+  input: "Serie diaria de rendimientos netos de la cartera en EUR del caso principal, sincronizada (mismas sesiones para todos los mercados)."
+  method: "Bloques circulares: cada bloque empieza en una sesión elegida uniformemente y avanza L sesiones dando la vuelta al final de la serie. Se concatenan bloques hasta 2.610 sesiones (10 x 261) y se trunca."
+  block_length_principal: 63
+  block_length_sensitivities: [126, 252]
+  paths: 10000
+  seed: 20261011
+  rng: "numpy.random.default_rng(seed), uno independiente por longitud de bloque, inicializado con la misma semilla."
+  path: "Patrimonio desde 1 compuesto con los rendimientos remuestreados; drawdown máximo de cada trayectoria completa."
+  statistic: "p = fracción de trayectorias con drawdown máximo > 0,15."
+  monte_carlo_interval: "Intervalo de Wilson al 95 % (z = 1,959964) para p."
+  acceptance: "Extremo superior del intervalo de Wilson <= 0,20 con bloque de 63."
+  block_dependence_rule: "Si la decisión (cumple o no cumple) difiere entre las longitudes 63, 126 y 252, el resultado es INCONCLUSO."
+  interpretation: >
+    El intervalo de Wilson mide solo el error de simulación Monte Carlo, no
+    toda la incertidumbre sobre el drawdown futuro. El bootstrap es una
+    estimación condicional al historial: no contiene crisis ausentes, cambios
+    de régimen ni colas más gruesas que las observadas.
+  limitation_integer_engine: >
+    El bootstrap remuestrea la serie histórica de rentabilidades de la
+    cartera. No se vuelve a ejecutar el motor de contratos enteros en cada
+    trayectoria sintética: no se recalculan señales, riesgos, posiciones
+    enteras, bandas ni el dimensionamiento con el capital vigente de esa
+    trayectoria. Los efectos de granularidad quedan fijados en los niveles de
+    capital de la trayectoria histórica. Por tanto, el bootstrap no
+    representa exactamente lo que ocurriría con trayectorias de capital
+    alternativas (por ejemplo, tras una pérdida grande el motor real podría
+    abrir menos contratos o dejar de abrirlos). Es una estimación condicional,
+    no una simulación completa de la estrategia.
+
+acceptance_criteria:
+  costs: taker principal
+  all_required:
+    - "CAGR neta en EUR > 0."
+    - "Mediana de la volatilidad móvil de 63 sesiones entre 0,04 y 0,07, ambos incluidos."
+    - "Percentil 95 de la volatilidad móvil de 63 sesiones <= 0,10."
+    - "Drawdown máximo histórico <= 0,12."
+    - "Bootstrap: extremo superior de Wilson de P(drawdown a 10 años > 0,15) <= 0,20 con bloque de 63."
+    - "Variante t+2: CAGR neta > 0 y drawdown máximo <= 0,15."
+  maker_cannot_rescue: true
+  no_guarantee_note: "Cumplir los umbrales no garantiza que el drawdown futuro quede por debajo del 15 %."
+
+verdicts:
+  NO_EJECUTABLE: "Falla una puerta (Kraken, datos, cobertura o inicio de evaluación). No se analiza rendimiento; se pide decisión."
+  RECHAZADA: "Falla cualquier criterio de all_required (en el bootstrap, con la misma decisión en las tres longitudes de bloque). Rechazada para esta cuenta y esta implementación; no refuta la tendencia como prima."
+  INCONCLUSA: "Todos los demás criterios se cumplen y la decisión del bootstrap difiere entre longitudes de bloque."
+  APROBADA_PROVISIONAL: >
+    Cumple todos los criterios, pero algún resultado se calculó con una
+    tarifa contractual o una especificación sin verificar (desviación del
+    protocolo). No permite proponer paper.
+  APTA_PARA_PROPONER_PAPER: >
+    Cumple todos los criterios con las tarifas contractuales y las
+    especificaciones verificadas en la puerta de Kraken y con la auditoría de
+    datos superada. El supuesto modelado de 1 tick por lado sigue declarado y
+    se informa su sensibilidad de 2 ticks; ese supuesto no impide este
+    veredicto. Solo permite proponer paper, sujeto a aprobación expresa de
+    Llorenç y revisión de controles operativos. No autoriza operaciones
+    reales.
+  single_run: "Una sola ejecución del caso principal y de cada sensibilidad con el código registrado."
+
+sensitivities_preregistered:
+  items:
+    - "Ejecución t+2 (forma parte de los criterios)."
+    - "Bootstrap con bloques de 126 y 252 (regla de inconclusión)."
+    - "Spread y deslizamiento de 2 ticks por lado (costs.tick_sensitivity; informativa)."
+    - "Costes de diagnóstico maker y por contrato (no aprueban)."
+    - "Comparación 1OZ frente al proxy GC, si hay liquidaciones de 1OZ (no sustituye al principal)."
+  rule: "Ninguna sensibilidad se convierte en caso principal ni en vía alternativa de aprobación."
+
+stress_episodes_reported_not_optimized:
+  periods:
+    - "[2008-09-01, 2009-04-01)"
+    - "[2013-05-01, 2013-10-01)"
+    - "[2020-02-15, 2020-05-01)"
+    - "[2022-01-01, 2023-01-01)"
+  coverage_rule: "Cada mercado debe tener señal y riesgo válidos al inicio de cada episodio y cumplir los límites de ausencias dentro de él. Si no, NO_EJECUTABLE antes de analizar rendimiento; no se sustituyen fechas ni fuentes."
+  reported: [rentabilidad, drawdown máximo, volatilidad, posiciones por mercado]
+
+diagnostics_without_threshold:
+  reported:
+    - "Uso máximo de margen con márgenes publicados por CME en una fecha registrada; aproximación, no margen confirmado de Kraken."
+    - "Coste anual por mercado y total; cociente coste anual taker / riesgo anual por mercado."
+    - "Número de operaciones y rollovers por mercado."
+    - "Exposición por clase de activo (divisas, oro) y sentido frente al USD."
+    - "Contribución al riesgo por mercado y volatilidad ex ante de la cartera."
+    - "Diferencia entre el objetivo del 6 % y la volatilidad realizada."
+    - "Sesiones con señal distinta de cero y posición 0 por la banda (restricción de tamaño), y bloqueos por el límite de divisas."
+    - "Sesiones sin liquidación por mercado."
+  omitted:
+    - "Correlación con SG Trend Index: se omite por no disponer de datos autorizados."
+    - "Sensibilidad a la exclusión del 10Y: no aplica, el 10Y no forma parte de la cartera."
+
+gates:
+  kraken_instruments:
+    when: "Antes de descargar o comprar cualquier dato de precios."
+    status: pending_evidence
+    status_rule: "Permanece pendiente hasta tener evidencia documental de cada punto de must_confirm para el instrumento exacto de la cuenta del EEE. Ninguna suposición la sustituye."
+    must_confirm:
+      - "Disponibilidad de M6E, M6B, M6A y 1OZ para la cuenta del EEE, con símbolo exacto de Kraken."
+      - "Equivalencia con el contrato CME, unidad, multiplicador y tick de la sección universe."
+      - "Forma de liquidación de la posición en Kraken (efectivo o entrega), sin suponer la de CME ni la descripción general de Kraken."
+      - "Vencimiento, último día de negociación en Kraken, cierres automáticos, periodos de solo cierre y cualquier otra restricción del instrumento."
+      - "Comisión por lado, base de nominal sobre la que se cobra y tasas adicionales que se cobran realmente a la cuenta por ese producto (costs.principal_taker.third_party_fees)."
+      - "Disponibilidad de post-only (informativo, no bloquea)."
+    evidence: "Se archiva con su SHA-256 fuera de git si contiene datos de la cuenta, y se registra en research/decisions/decision_log.md."
+    failure: >
+      Si falta un instrumento o no coincide: NO_EJECUTABLE. No se cambia el
+      universo dentro de este ensayo; se pide aprobación para un prerregistro
+      nuevo con otro experiment_id. Si no se puede verificar el coste
+      contractual total por lado, la puerta falla y no se descargan datos.
+  data_purchase:
+    when: "Tras pasar la puerta de Kraken."
+    must_confirm: [condiciones de exportación y uso interno de Norgate, cobertura de contratos vencidos desde 2007-06-01, precio dentro del presupuesto aprobado]
+    failure: "Detener y pedir aprobación para un experimento proxy separado."
+  data_audit:
+    when: "Tras descargar y antes de calcular ninguna señal, rendimiento o estadístico."
+    records: [fechas inicial y final por contrato, observaciones, huecos y duplicados, calendario y versión, vencimientos y fechas de rollover, construcción de la cadena, alineación sin información futura, conversión EUR, SHA-256 de cada fichero bruto, versión del código de importación, limitaciones y campos sin verificar]
+    failure: "Si no se cumple required_coverage (signal_only_when_flat) o evaluation_start_requirement: NO_EJECUTABLE y se pide decisión."
+    settlement_recovery: >
+      En la auditoría, antes de calcular ninguna señal, se intenta recuperar
+      de la fuente alternativa autorizada toda liquidación ausente de cada
+      contrato durante su pertenencia a la cadena, sin saber si habrá
+      posición (así la recuperación no depende de los resultados). Se
+      registran las recuperadas y las no recuperadas. Si en la simulación una
+      posición abierta encuentra una ausencia no recuperada, la simulación se
+      detiene como NO_EJECUTABLE y no se informa un veredicto con resultados
+      parciales.
+
+tests_required_before_backtest:
+  - "Signo de cada ventana, incluido el signo 0, y los siete valores de la señal combinada."
+  - "Ausencia de información futura: alterar precios posteriores a t no cambia señal, riesgo ni posición en t."
+  - "Desfase señal y ejecución (t+1 y t+2)."
+  - "Conversión EUR con el último tipo publicado y sin tipos futuros."
+  - "Multiplicadores, ticks y valor por punto de los cuatro micros."
+  - "Redondeo a contratos enteros, bandas de apertura y cierre, reversos y cambio de señal."
+  - "Máximo de un contrato por mercado."
+  - "Límite de dos divisas en el mismo sentido y orden de desempate."
+  - "Actualización del capital vigente tras ganancias y pérdidas."
+  - "Orden de contabilización: el P&L de cada intervalo usa la posición abierta durante el intervalo; las operaciones y costes de la liquidación de d se cobran en d; una apertura a S_d no genera P&L en d."
+  - "Rollover con posición mantenida (objetivo - q = 0): un cierre en el saliente y una apertura en el entrante, dos costes, y P&L continuo sin salto de rollover."
+  - "Rollover con reversión (+1 a -1 en R): 1 contrato cerrado en el saliente y 1 abierto en el entrante; 2 contratos y 2 costes, no 4."
+  - "Rollover con cierre (+1 a 0) y con entrada (0 a +1) en R: una sola pata cada uno."
+  - "Falta de liquidación del saliente en la sesión de rollover programada: se usa la recuperada de la fuente alternativa; sin ella, NO_EJECUTABLE, sin aplazar ni inventar el cierre."
+  - "Falta de liquidación del entrante en R: cierre del saliente, posición 0 y apertura según el ciclo de órdenes en la primera sesión con liquidación del entrante."
+  - "Ausencia con posición abierta: nunca P&L cero; liquidación recuperada de la fuente alternativa o NO_EJECUTABLE."
+  - "Ausencia sin posición: sin registro de señal ese día; movimiento desde la última liquidación válida del mismo contrato en la siguiente; una sola actualización de la EWMA; ninguna imputación; cuenta para los límites de signal_only_when_flat."
+  - "Cierre oficial del mercado: no es ausencia y no genera P&L."
+  - "Ciclo de órdenes con k = 1 y k = 2: registro por sesión de señal, sesión programada e_k(s) por calendario oficial, registro gobernante más reciente vencido, sustitución de registros antiguos, histéresis con la q realmente abierta en la ejecución."
+  - "Variante k = 2 con señales sucesivas: en e solo gobierna el registro de e - 2; el de e - 1 no se usa hasta su sesión programada."
+  - "Ejecución sin liquidación con q = 0: no se ejecuta; en la siguiente sesión con liquidación gobierna el registro vencido más reciente con la q de ese momento; se registran aplazamientos y sustituciones."
+  - "Un registro sin aplicar nunca abre en un contrato que ya pasó su rollover."
+  - "Reproducibilidad del ciclo de órdenes: dos ejecuciones con los mismos datos sintéticos dan la misma secuencia de registros, sustituciones y operaciones."
+  - "Ninguna operación en un contrato antes de que exista ni después de su rollover."
+  - "Cadena de señal sin saltos de rollover."
+  - "Sensibilidad de 2 ticks: dobla solo el componente de spread y deslizamiento."
+  - "Bootstrap circular de trayectorias completas, sincronizado entre mercados, con semilla fija reproducible."
+  - "Intervalo de Wilson frente a un cálculo independiente."
+  - "Rechazo de datos que incumplan la cobertura."
+  - "Solo se leen rutas de data.paths.allowed_read_paths; ninguna de prohibited_read_paths salvo prohibited_read_exceptions; solo se escribe en authorized_write_paths."
+  - "Hash de este YAML en el código."
+
+reporting:
+  - "SHA-256 de este YAML, de los datos brutos y del código."
+  - "Fuentes, licencias y fechas de descarga."
+  - "Especificaciones verificadas y pendientes."
+  - "Métodos de señal, P&L, rollover y costes por mercado."
+  - "Registro de operaciones."
+  - "Resultados brutos y netos, volatilidad, drawdown, bootstrap con intervalos, episodios de estrés, sensibilidades y diagnósticos."
+  - "Limitaciones de datos y ejecución."
+  - "Veredicto según verdicts."
+  - "Actualización de research/decisions/decision_log.md, research/decisions/research_summary.md, research/trials_inventory.csv y research/experiments.csv en sus formatos, sin sobrescribir resultados anteriores."
+
+limitations_declared:
+  - "Los datos diarios no permiten reconstruir el spread intradía ni garantizar ejecución a la liquidación."
+  - "Spread y deslizamiento son un supuesto de 1 tick, no un backtest de ejecución."
+  - "Todo el historial es un proxy sintético del micro construido con contratos estándar; antes de 2009 (divisas) y 2025 (1OZ) el micro no existía."
+  - "El GC es un proxy del 1OZ."
+  - "Las correlaciones históricas pueden cambiar en crisis."
+  - "El bootstrap depende de la representatividad del historial."
+  - "Los resultados calculados con tarifas contractuales o especificaciones sin verificar se etiquetan PROVISIONAL; el tick de spread y deslizamiento es un supuesto modelado declarado con sensibilidad de 2 ticks."
+  - "El bootstrap no reejecuta el dimensionamiento con contratos enteros en cada trayectoria sintética."
+  - "El 10Y queda fuera; la cartera tiene solo dos clases de activo (divisas y oro), menos amplitud que la hipótesis general."
+
+decision_policy:
+  no_live_trading: true
+  paper_requires_explicit_approval: true
+  rule_change_requires_new_experiment_id: true
+  no_post_hoc_parameter_rescue: true
+  no_data_before_approval_and_freeze: true
+  no_src_copybot_or_backtest_changes: true

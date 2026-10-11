@@ -13,7 +13,10 @@ repos:
         entry: 'Prohibido commitear .env, config.toml, state, logs o CSV'
         language: fail
         files: '(^|/)(\.env(\..*)?|state\.json|service\.env|config\.toml|.*\.csv|.*\.log)$'
-        exclude: '(^|/)\.env\.example$|^backtest/(datos|resultados)/[^/]+\.csv$'
+        # Las dos excepciones de research/ son rutas exactas ancladas en la raíz: solo
+        # esos dos registros de gobernanza. detect-secrets sigue escaneándolos (su propio
+        # exclude de arriba no los cubre).
+        exclude: '(^|/)\.env\.example$|^backtest/(datos|resultados)/[^/]+\.csv$|^research/(trials_inventory|experiments)\.csv$'
       - id: ruff
         name: ruff
         entry: .venv/bin/ruff check

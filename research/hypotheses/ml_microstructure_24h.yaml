@@ -1,0 +1,314 @@
+id: ml-kraken-microstructure-24h-v1
+version: 1
+status: preregistered_design_pending_data_gate
+created_utc_date: "2026-10-10"
+live_trading: false
+
+purpose: >
+  Test whether a compact, point-in-time model using Kraken Futures market
+  analytics can identify 24-hour directional opportunities that remain
+  economically positive after realistic fees, slippage, and funding. This is
+  a research specification only. No result authorizes live trading.
+
+falsifiable_hypothesis: >
+  On PF_XBTUSD and PF_ETHUSD, a temporally validated LightGBM model using only
+  features demonstrably available by the decision timestamp will produce
+  out-of-sample long/short decisions whose net portfolio return is positive,
+  whose dependence-aware 95% confidence interval excludes zero, whose observed
+  performance exceeds the 90th percentile of pre-defined matched-random
+  strategies, whose Sharpe exceeds equal-weight buy-and-hold, and whose maximum
+  drawdown remains below 15%, including under adverse transaction costs.
+  Failure to meet every primary criterion is not a pass.
+
+scope:
+  exchange: Kraken Futures
+  contracts: [PF_XBTUSD, PF_ETHUSD]
+  verify_contract_symbols_against_live_market_catalogue_before_download: true
+  cross_exchange_features: prohibited_in_primary_experiment
+  timeframe_decision: 1d
+  prediction_frequency: once_per_UTC_day
+  timezone: UTC
+  decision_time_utc: "00:15:00"
+  feature_cutoff_utc: "00:00:00"
+  maximum_source_watermark_lag_minutes: 15
+  forecast_horizon_hours: 24
+  maximum_entry_exit_alignment_error_minutes: 5
+  historical_test_is_not_confirmatory_if_its_results_were_previously_inspected: true
+
+label:
+  type: three_class_economic_action
+  classes: [SHORT, FLAT, LONG]
+  rationale: >
+    A forced binary directional output has no explicit no-trade class and may
+    reward predictions whose magnitude cannot cover costs. The three-class
+    label is the primary hypothesis; a binary direction model is not silently
+    substituted for it.
+  entry: >
+    First valid one-minute trade candle open at or after the decision timestamp.
+    If the historical source's timestamp semantics cannot establish this
+    ordering, the sample is invalid until the alignment is resolved.
+  exit: >
+    First valid one-minute trade candle open at or after entry timestamp plus
+    24 hours. If the exit is more than 5 minutes late, mark the sample invalid
+    and record the reason; never move the horizon to a favourable price.
+  net_return_calculation: >
+    Calculate both hypothetical long and short returns over the same entry and
+    exit timestamps. Deduct taker fees at entry and exit using the fee schedule
+    frozen before evaluation, slippage at each side, and funding actually
+    incurred/received during the holding period with the documented sign
+    convention. If historical funding for a relevant settlement is missing,
+    apply only the pre-frozen conservative training-period imputation below;
+    never use future observations to estimate an imputation parameter.
+  classification_rule: >
+    Let rL and rS be net long and short returns after all modelled costs. If
+    max(rL, rS) is at least +0.0010 (10 basis points net), assign the class
+    whose net return is larger. Otherwise assign FLAT. If the two values differ
+    by less than 2 basis points and both exceed the threshold, assign FLAT and
+    flag the event for audit. This 10 bp net hurdle is fixed in advance.
+  label_sensitivity_only:
+    net_hurdles_basis_points: [0, 10, 20]
+    use_for_primary_model_selection: false
+    rule: >
+      Report these label sensitivities as diagnostics only. The 10 bp label is
+      primary; do not replace it after seeing results.
+  no_lookahead: true
+  overlapping_or_ambiguous_samples: >
+    Daily decision times target non-overlapping 24-hour holding intervals only
+    if actual entry/exit timestamps confirm that property. Purge any training
+    row whose label interval overlaps the validation/test label interval.
+
+features:
+  as_of_rule: >
+    Every raw observation must have an availability timestamp no later than
+    the feature cutoff. Normalize source bucket start/end semantics first;
+    never infer availability solely from a timestamp field's name.
+  primary_families:
+    price_and_risk:
+      - log_return_1d
+      - log_return_7d
+      - realized_volatility_1d
+      - realized_volatility_7d
+      - distance_to_sma200_as_control
+    open_interest:
+      - open_interest_pct_change_1h
+      - open_interest_pct_change_4h
+      - open_interest_pct_change_24h
+    aggressor_flow:
+      - aggressor_differential_normalized_1h
+      - aggressor_differential_normalized_4h
+      - aggressor_differential_normalized_24h
+      - cvd_change_normalized_1h
+      - cvd_change_normalized_4h
+      - cvd_change_normalized_24h
+    funding:
+      - latest_published_funding_rate
+      - funding_zscore_7d_using_past_only
+    orderbook:
+      - bid_ask_imbalance_at_documented_depth_bands
+      - spread_basis_points
+      - bid_and_ask_liquidity_usd_at_documented_bands
+    liquidations:
+      - liquidation_volume_normalized_by_trade_volume_or_open_interest
+      - long_short_liquidation_skew_only_if_source_explicitly_labels_side
+    asset_identity:
+      - contract_id
+  feature_semantics:
+    - >
+      Do not call aggregate liquidation volume a directional liquidation delta
+      unless the source explicitly distinguishes the liquidated side.
+    - >
+      Do not claim a 1% depth imbalance unless the historical endpoint actually
+      provides that depth or it can be reconstructed from archived snapshots.
+      Document exact depth bands, units and bid/ask sign convention.
+    - >
+      Use the documented aggressor-differential/CVD series as such; do not claim
+      full historical buyer-initiated minus seller-initiated trade delta unless
+      the historical source supports that reconstruction.
+  transformations:
+    fit_on_training_only: true
+    rolling_windows_use_past_observations_only: true
+    no_forward_fill_of_missing_market_features: true
+    no_missing_value_to_zero_conversion_without_semantic_justification: true
+    feature_scaling_or_clipping_parameters_fit_on_training_only: true
+    feature_selection_after_final_test: prohibited
+  data_gate:
+    require_all_primary_families_for_confirmatory_run: true
+    minimum_common_history_years_including_price_and_selected_features: 6
+    minimum_valid_rows_per_contract_pct: 98.0
+    minimum_price_label_alignment_pct: 99.0
+    missing_data_policy: >
+      Audit each family by contract, bucket, and time range before any model
+      performance is calculated. If a primary family cannot pass coverage and
+      point-in-time tests, label this version NOT TESTABLE AS SPECIFIED. A
+      reduced-feature experiment requires a new experiment ID; do not silently
+      drop the unavailable family and retain the same ID.
+    no_synthetic_historical_backfill: true
+
+costs:
+  fee_model:
+    execution_assumption: taker_entry_and_taker_exit
+    fee_source: >
+      Freeze and archive the official Kraken Futures fee schedule applicable to
+      the intended account tier before any result calculation. Apply it at
+      every entry and exit. Record fee schedule URL, retrieval time and hash.
+    unknown_or_unverified_fee_schedule: block_evaluation
+  slippage:
+    baseline_basis_points_per_side: 5
+    adverse_basis_points_per_side: 10
+    applied_at_entry_and_exit: true
+    future_liquidity_must_not_be_used_to_estimate_entry_slippage: true
+  funding:
+    use_actual_historical_settlements_when_verified: true
+    sign_convention_must_be_unit_tested: true
+    missing_history_imputation:
+      method: >
+        For each contract and position side, charge the 90th percentile of
+        adverse absolute funding observed in the training portion only. Do not
+        credit favourable funding for a missing interval.
+      fit_only_on_training_data: true
+      record_each_imputed_settlement: true
+      minimum_observed_settlements_required: 100
+      insufficient_history: mark_phase_inconclusive
+  scenarios:
+    - baseline
+    - adverse_costs
+  adverse_scenario:
+    fee_multiplier: 1.0
+    slippage_basis_points_per_side: 10
+    funding: actual_when_verified_else_conservative_imputation
+  no_optimistic_maker_rebates: true
+
+model:
+  primary: LightGBM_multiclass
+  classes: [SHORT, FLAT, LONG]
+  objective: multiclass
+  parameters_frozen:
+    n_estimators: 300
+    learning_rate: 0.03
+    max_depth: 4
+    num_leaves: 15
+    min_child_samples: 100
+    subsample: 0.8
+    subsample_freq: 1
+    colsample_bytree: 0.8
+    reg_lambda: 10.0
+    class_weight: null
+    random_state: 20261010
+    n_jobs: 1
+    deterministic: true
+  model_selection:
+    unrestricted_grid_search: prohibited
+    early_stopping_on_test_data: prohibited
+    primary_model_config_changes_require_new_experiment_id: true
+  baselines:
+    - most_frequent_class
+    - multinomial_logistic_regression_same_features
+    - cash_no_trade
+    - equal_weight_buy_and_hold_BTC_ETH
+    - frozen_SMA200_directional_rule
+  calibration:
+    method: multiclass_temperature_scaling
+    fit_on: chronological_calibration_predictions_only
+    minimum_calibration_days: 180
+    calibrator_must_not_see_outer_test_labels: true
+    report: [multiclass_Brier_score, log_loss, reliability_by_class, calibration_plot]
+  action_policy:
+    trade_long_if: "calibrated_P_LONG >= 0.70"
+    trade_short_if: "calibrated_P_SHORT >= 0.70"
+    otherwise: FLAT
+    thresholds_fixed_before_outer_evaluation: true
+    threshold_sensitivities_only: [0.65, 0.75]
+    sensitivity_results_cannot_replace_primary_result: true
+
+validation:
+  minimum_initial_training_history_years: 3
+  temporal_outer_folds:
+    type: expanding_walk_forward
+    test_block_months: 6
+    minimum_pre_final_test_folds: 3
+    purge_label_overlap: true
+    embargo_hours_after_label_end: 24
+    shuffle: false
+  calibration_window:
+    months: 6
+    immediately_precedes_each_outer_test_fold: true
+    excluded_from_base_model_fit_for_that_fold: true
+  final_historical_test:
+    duration_days: 365
+    one_shot: true
+    must_be_time_disjoint_from_model_selection: true
+    if_previously_inspected_or_used_to_choose_any_design_decision: >
+      It is not confirmatory. Record contamination and rely on prospective
+      paper results for final confirmation instead.
+  uncertainty:
+    method: paired_moving_block_bootstrap_by_calendar_date
+    primary_block_length_days: 20
+    sensitivity_block_lengths_days: [10, 40]
+    replicates: 10000
+    confidence_level: 0.95
+    resample_BTC_and_ETH_dates_jointly: true
+  random_comparator:
+    simulations: 1000
+    match_within_each_oos_window:
+      - number_of_entries
+      - long_short_frequency
+      - mean_gross_exposure
+      - holding_period
+    seeds_saved: true
+    do_not_select_best_random_path: true
+  metrics:
+    primary:
+      - net_annualized_portfolio_return
+      - 95pct_CI_net_annualized_return
+      - maximum_drawdown
+      - Sharpe_after_costs
+      - percentile_vs_matched_random
+    secondary:
+      - per_contract_net_return
+      - per_fold_net_return
+      - net_expectancy_per_trade
+      - turnover_and_exposure
+      - trade_count_and_class_coverage
+      - multiclass_Brier_score
+      - log_loss
+      - macro_F1_and_balanced_accuracy
+      - calibration_by_probability_bin
+      - adverse_cost_sensitivity
+      - funding_observed_vs_imputed_share
+  primary_pass_requires_all:
+    - net_annualized_portfolio_return_greater_than_zero
+    - lower_bound_of_95pct_CI_for_net_annualized_return_greater_than_zero
+    - observed_result_at_or_above_90th_percentile_of_matched_random
+    - Sharpe_after_costs_greater_than_equal_weight_buy_and_hold
+    - maximum_drawdown_strictly_less_than_0.15
+    - all_above_economic_conditions_hold_under_adverse_costs
+    - at_least_100_closed_oos_trades_combined
+    - at_least_30_closed_oos_trades_per_contract
+  classification:
+    pass: every_primary_pass_condition_met_on_valid_locked_test
+    reject: negative_net_return_or_drawdown_at_least_0.15_or_adverse_cost_failure
+    inconclusive: >
+      Any missing coverage gate, compromised test, inadequate trade count,
+      confidence interval crossing zero, dependence on one fold/contract, or
+      other primary pass condition not met without a clear rejection condition.
+  all_trials_and_variants_logged: true
+  multiple_testing_adjustment_or_deflated_sharpe_reported: true
+
+reproducibility:
+  raw_data_immutable: true
+  raw_and_feature_table_sha256: true
+  record_api_url_parameters_and_retrieval_utc: true
+  record_source_watermark_and_bucket_semantics: true
+  record_git_commit_python_and_dependency_lockfile_hash: true
+  deterministic_random_seeds_saved: true
+  save_oos_predictions_and_all_trade_ledgers: true
+  do_not_commit_secrets_or_large_raw_data_to_git: true
+
+decision_policy:
+  no_live_trading: true
+  historical_pass_does_not_enable_live: true
+  paper_phase_required: true
+  every_method_or_feature_set_change_requires_new_experiment_id: true
+  no_post_hoc_parameter_rescue: true
+  if_required_history_is_unavailable: not_testable_as_specified
+  expected_outcome: rejected_or_inconclusive_until_evidence_proves_otherwise
