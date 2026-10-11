@@ -43,3 +43,9 @@ htmlcov/
 .idea/
 .vscode/
 .DS_Store
+
+# --- Research: registros de gobernanza del historial canónico (rutas exactas) ---
+# Las reglas de data/ y *.csv de arriba no se modifican: todo lo demás sigue excluido,
+# y nada bajo research/data/ puede reintroducirse porque el directorio está excluido.
+!research/trials_inventory.csv
+!research/experiments.csv

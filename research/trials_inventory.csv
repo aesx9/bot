@@ -1,0 +1,53 @@
+trial_id,family,status,source,notes
+copy-trading,copy trading Hyperliquid,evaluado y rechazado,experiments.csv,un ensayo; no se informaron variantes
+trend-4h-core-v01,SMA50 + Stoch RSI 4h (BTC ETH SOL),evaluado y rechazado,experiments.csv,variante 1 de 20
+trend-4h-core-v02,SMA50 + Stoch RSI 4h (BTC ETH SOL),evaluado y rechazado,experiments.csv,variante 2 de 20
+trend-4h-core-v03,SMA50 + Stoch RSI 4h (BTC ETH SOL),evaluado y rechazado,experiments.csv,variante 3 de 20
+trend-4h-core-v04,SMA50 + Stoch RSI 4h (BTC ETH SOL),evaluado y rechazado,experiments.csv,variante 4 de 20
+trend-4h-core-v05,SMA50 + Stoch RSI 4h (BTC ETH SOL),evaluado y rechazado,experiments.csv,variante 5 de 20
+trend-4h-core-v06,SMA50 + Stoch RSI 4h (BTC ETH SOL),evaluado y rechazado,experiments.csv,variante 6 de 20
+trend-4h-core-v07,SMA50 + Stoch RSI 4h (BTC ETH SOL),evaluado y rechazado,experiments.csv,variante 7 de 20
+trend-4h-core-v08,SMA50 + Stoch RSI 4h (BTC ETH SOL),evaluado y rechazado,experiments.csv,variante 8 de 20
+trend-4h-core-v09,SMA50 + Stoch RSI 4h (BTC ETH SOL),evaluado y rechazado,experiments.csv,variante 9 de 20
+trend-4h-core-v10,SMA50 + Stoch RSI 4h (BTC ETH SOL),evaluado y rechazado,experiments.csv,variante 10 de 20
+trend-4h-core-v11,SMA50 + Stoch RSI 4h (BTC ETH SOL),evaluado y rechazado,experiments.csv,variante 11 de 20
+trend-4h-core-v12,SMA50 + Stoch RSI 4h (BTC ETH SOL),evaluado y rechazado,experiments.csv,variante 12 de 20
+trend-4h-core-v13,SMA50 + Stoch RSI 4h (BTC ETH SOL),evaluado y rechazado,experiments.csv,variante 13 de 20
+trend-4h-core-v14,SMA50 + Stoch RSI 4h (BTC ETH SOL),evaluado y rechazado,experiments.csv,variante 14 de 20
+trend-4h-core-v15,SMA50 + Stoch RSI 4h (BTC ETH SOL),evaluado y rechazado,experiments.csv,variante 15 de 20
+trend-4h-core-v16,SMA50 + Stoch RSI 4h (BTC ETH SOL),evaluado y rechazado,experiments.csv,variante 16 de 20
+trend-4h-core-v17,SMA50 + Stoch RSI 4h (BTC ETH SOL),evaluado y rechazado,experiments.csv,variante 17 de 20
+trend-4h-core-v18,SMA50 + Stoch RSI 4h (BTC ETH SOL),evaluado y rechazado,experiments.csv,variante 18 de 20
+trend-4h-core-v19,SMA50 + Stoch RSI 4h (BTC ETH SOL),evaluado y rechazado,experiments.csv,variante 19 de 20
+trend-4h-core-v20,SMA50 + Stoch RSI 4h (BTC ETH SOL),evaluado y rechazado,experiments.csv,variante 20 de 20
+trend-4h-volatile-v01,SMA50 + Stoch RSI 4h (XRP ZEC),evaluado y rechazado,experiments.csv,variante 1 de 20; informe primario no verificado
+trend-4h-volatile-v02,SMA50 + Stoch RSI 4h (XRP ZEC),evaluado y rechazado,experiments.csv,variante 2 de 20
+trend-4h-volatile-v03,SMA50 + Stoch RSI 4h (XRP ZEC),evaluado y rechazado,experiments.csv,variante 3 de 20
+trend-4h-volatile-v04,SMA50 + Stoch RSI 4h (XRP ZEC),evaluado y rechazado,experiments.csv,variante 4 de 20
+trend-4h-volatile-v05,SMA50 + Stoch RSI 4h (XRP ZEC),evaluado y rechazado,experiments.csv,variante 5 de 20
+trend-4h-volatile-v06,SMA50 + Stoch RSI 4h (XRP ZEC),evaluado y rechazado,experiments.csv,variante 6 de 20
+trend-4h-volatile-v07,SMA50 + Stoch RSI 4h (XRP ZEC),evaluado y rechazado,experiments.csv,variante 7 de 20
+trend-4h-volatile-v08,SMA50 + Stoch RSI 4h (XRP ZEC),evaluado y rechazado,experiments.csv,variante 8 de 20
+trend-4h-volatile-v09,SMA50 + Stoch RSI 4h (XRP ZEC),evaluado y rechazado,experiments.csv,variante 9 de 20
+trend-4h-volatile-v10,SMA50 + Stoch RSI 4h (XRP ZEC),evaluado y rechazado,experiments.csv,variante 10 de 20
+trend-4h-volatile-v11,SMA50 + Stoch RSI 4h (XRP ZEC),evaluado y rechazado,experiments.csv,variante 11 de 20
+trend-4h-volatile-v12,SMA50 + Stoch RSI 4h (XRP ZEC),evaluado y rechazado,experiments.csv,variante 12 de 20
+trend-4h-volatile-v13,SMA50 + Stoch RSI 4h (XRP ZEC),evaluado y rechazado,experiments.csv,variante 13 de 20
+trend-4h-volatile-v14,SMA50 + Stoch RSI 4h (XRP ZEC),evaluado y rechazado,experiments.csv,variante 14 de 20
+trend-4h-volatile-v15,SMA50 + Stoch RSI 4h (XRP ZEC),evaluado y rechazado,experiments.csv,variante 15 de 20
+trend-4h-volatile-v16,SMA50 + Stoch RSI 4h (XRP ZEC),evaluado y rechazado,experiments.csv,variante 16 de 20
+trend-4h-volatile-v17,SMA50 + Stoch RSI 4h (XRP ZEC),evaluado y rechazado,experiments.csv,variante 17 de 20
+trend-4h-volatile-v18,SMA50 + Stoch RSI 4h (XRP ZEC),evaluado y rechazado,experiments.csv,variante 18 de 20
+trend-4h-volatile-v19,SMA50 + Stoch RSI 4h (XRP ZEC),evaluado y rechazado,experiments.csv,variante 19 de 20
+trend-4h-volatile-v20,SMA50 + Stoch RSI 4h (XRP ZEC),evaluado y rechazado,experiments.csv,variante 20 de 20
+funding-A,arbitraje de funding entre plataformas,evaluado y rechazado en desarrollo,experiments.csv,sin holdout
+funding-B,cash and carry,evaluado y rechazado en desarrollo,experiments.csv,sin holdout
+trend-daily-sma200,SMA200 diario,"evaluado: long_short rechazada, long_flat inconclusa",hypotheses/trend_daily_sma200.yaml,evaluado el 2026-10-10 (fase A); ver decisions/decision_log.md
+ml-microstructure-24h,ML microestructura 24h,prerregistrado; no ejecutado (sin datos),hypotheses/ml_microstructure_24h.yaml,se cuenta porque el YAML v4 lo exige
+v4-lightgbm,v4 principal (margen 0.5; umbral 10 pb),este experimento,hypotheses/ml_daily_direction_multiasset_v4.yaml,
+v4-logit,v4 comparador logit,este experimento,hypotheses/ml_daily_direction_multiasset_v4.yaml,
+v4-lightgbm-margin0,v4 sensibilidad de margen 0,este experimento,hypotheses/ml_daily_direction_multiasset_v4.yaml,
+v4-lightgbm-margin1,v4 sensibilidad de margen 1.0,este experimento,hypotheses/ml_daily_direction_multiasset_v4.yaml,
+v4-lightgbm-h0,v4 sensibilidad de etiqueta 0 pb,este experimento,hypotheses/ml_daily_direction_multiasset_v4.yaml,
+v4-lightgbm-h20,v4 sensibilidad de etiqueta 20 pb,este experimento,hypotheses/ml_daily_direction_multiasset_v4.yaml,
+funding-carry-cross-sectional-v1,carry de funding transversal en perpetuos Kraken (quintiles semanales),"evaluado: rechazado en walk-forward (drawdown 23,4 %); holdout no consumido",hypotheses/funding_carry_cross_sectional_v1.yaml,"ensayo 52; variantes de sensibilidad solo informativas (costes adversos, retiradas 5 %, aleatorias independientes)"

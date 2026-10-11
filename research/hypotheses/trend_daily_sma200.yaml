@@ -1,0 +1,159 @@
+id: trend-daily-sma200
+version: 1
+status: preregistered
+created_utc_date: "2026-10-10"
+purpose: >
+  Separar la existencia de una señal histórica en spot de su posible
+  monetización en perpetuos Kraken. Este prerregistro no constituye una
+  autorización para operar con dinero real.
+live_trading: false
+
+universe:
+  assets: [BTC, ETH]
+  phase_a_pairs: [BTC/USD, ETH/USD]
+  phase_b_contracts: [PF_XBTUSD, PF_ETHUSD]
+  rationale: >
+    Universo fijo por liquidez, continuidad de mercado y simplicidad
+    experimental. Esto reduce el número de decisiones de selección, pero
+    no elimina todos los sesgos de supervivencia ni los cambios estructurales.
+
+data:
+  timeframe: 1d
+  signal_uses_closed_candles_only: true
+  execution: next_available_daily_open_after_signal
+  no_lookahead: true
+  missing_candles: >
+    No rellenar automáticamente. Distinguir intervalos sin operaciones de
+    fallos de captura; documentar cualquier exclusión antes de evaluar.
+  freeze_sources_hashes_before_evaluation: true
+
+signal:
+  indicator: SMA
+  period_days: 200
+  primary_variant:
+    name: long_short
+    rule:
+      close_gt_sma200: long
+      close_lt_sma200: short
+      close_eq_sma200: keep_previous_position
+  secondary_variant:
+    name: long_flat
+    rule:
+      close_gt_sma200: long
+      close_lt_sma200: flat
+      close_eq_sma200: keep_previous_position
+  parameter_optimization: prohibited
+
+position_sizing:
+  target_annualized_volatility_per_asset: 0.10
+  volatility_lookback_days: 60
+  annualization_days: 365
+  max_gross_leverage_per_asset: 1.0
+  portfolio_allocation: equal_weight
+  allocation_per_asset_before_volatility_scaling: 0.5
+  formula: >
+    Calculate close-to-close daily returns using only data available at the
+    signal close. Annualized volatility is stddev of the prior 60 daily
+    returns times sqrt(365). Asset exposure multiplier is min(1.0,
+    0.10 / annualized_volatility). Apply the signal direction, then the
+    0.5 equal portfolio weight. If the volatility estimate is unavailable
+    or zero, hold that asset flat until valid data exist.
+  leverage_cap_applies_to: gross_exposure
+
+phase_a_spot:
+  question: "Does the signal show evidence of a net edge before attempting to monetize it in perpetuals?"
+  variants:
+    primary: long_short
+    secondary: long_flat
+  costs:
+    base:
+      fee_per_side: 0.004
+      slippage_per_side: 0.0005
+      total_assumed_cost_per_side: 0.0045
+    adverse:
+      fee_per_side: 0.008
+      slippage_per_side: 0.002
+      total_assumed_cost_per_side: 0.01
+    application: >
+      Apply costs to absolute changes in position exposure (turnover), per
+      asset, at the simulated next-open execution. Do not charge a fee merely
+      for holding a position.
+  comparators:
+    - cash
+    - buy_and_hold
+    - random_signal_matched_changes_and_mean_exposure
+  random_signal:
+    simulations: 1000
+    matching: >
+      Match the number of position changes and mean absolute exposure of the
+      tested variant, within each asset and evaluation window; use a fixed,
+      recorded random seed and store all seeds/results.
+    selection_rule: >
+      Do not select the best random simulation. Compare the observed result
+      to the empirical distribution of all 1000 simulations.
+  temporal_validation:
+    windows: consecutive_calendar_years
+    choose_best_windows: false
+    report_each_window: true
+  uncertainty:
+    method: moving_block_bootstrap
+    primary_block_length_days: 20
+    sensitivity_block_lengths_days: [10, 40]
+    confidence_level: 0.95
+    target_statistic: annualized_net_return
+    replicates: 10000
+    preserve_temporal_dependence: true
+  verdict:
+    rejected:
+      - net_return_after_costs_is_negative
+      - maximum_drawdown_is_greater_than_or_equal_to_0.15
+    inconclusive:
+      - net_return_is_positive_but_95_percent_interval_includes_zero
+      - observed_result_does_not_exceed_random_signal_90th_percentile
+      - any_promising_condition_is_not_met
+    promising:
+      - 95_percent_interval_for_net_annualized_return_is_entirely_above_zero
+      - observed_result_is_at_or_above_random_signal_90th_percentile
+      - sharpe_is_higher_than_buy_and_hold
+      - all_promising_conditions_hold_under_adverse_costs
+  reporting:
+    - net_return_after_costs
+    - annualized_net_return
+    - maximum_drawdown
+    - sharpe
+    - exposure_and_turnover
+    - annual_window_results
+    - bootstrap_intervals_for_block_lengths_10_20_40
+    - random_signal_percentile
+    - base_and_adverse_cost_results
+    - per_asset_and_combined_results
+
+phase_b_kraken_perpetuals:
+  question: >
+    Test whether realistic exchange costs and funding erase the Phase A
+    signal. This phase is a cost-survival check, not a search for better
+    parameters or a fresh strategy-selection exercise.
+  contracts: [PF_XBTUSD, PF_ETHUSD]
+  fees: use documented Kraken Futures fee schedule applicable to the assumed account; freeze and cite the schedule before calculation
+  funding:
+    use_observed_realized_rates_when_available: true
+    where_history_is_missing: >
+      Before any Phase B calculation, freeze a conservative imputation rule:
+      charge the position an adverse funding cost equal to the 90th percentile
+      of observed absolute adverse funding rates for the same contract; never
+      credit positive funding for missing intervals. Mark imputed settlements
+      separately from observed settlements.
+    no_fabricated_observations: true
+  execution_costs: include fees and conservative slippage on each turnover event
+  optimization: prohibited
+  decision: >
+    Report whether realistic and adverse costs materially erase the Phase A
+    signal. Missing funding history or uncertain candle alignment makes the
+    phase inconclusive, not positive.
+
+decision_policy:
+  no_live_trading: true
+  historical_result_does_not_enable_live: true
+  rule_change_requires_new_experiment_id: true
+  no_post_hoc_parameter_rescue: true
+  expected_outcome: rejected_or_inconclusive

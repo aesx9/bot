@@ -1,0 +1,7 @@
+# Datos extraídos de Kraken (1,1 GB) y datos procesados; se regeneran con los scripts
+data/raw/
+data/processed/
+
+# Python
+__pycache__/
+*.pyc

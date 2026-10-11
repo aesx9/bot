@@ -1,0 +1,279 @@
+id: funding-carry-cross-sectional-v1
+version: 3
+status: preregistered
+created_utc_date: "2026-10-10"
+frozen: true
+frozen_utc_date: "2026-10-11"
+proposal_history: "hypotheses/funding_carry_cross_sectional_v1.proposal.yaml (versión 3, SHA-256 aa882507d8152975584931e92a5d9c5ad87b789af79e7045d68720d9029725c5)"
+live_trading: false
+purpose: >
+  Contrastar si un diferencial de funding entre perpetuos cripto de Kraken
+  Futures, capturado con una cartera larga en los de funding bajo y corta en
+  los de funding alto, cubre comisiones, deslizamiento y riesgo de precio.
+  No es una autorización para operar en paper ni con dinero real.
+
+hypothesis:
+  statement: >
+    Una cartera semanal larga en el quintil de perpetuos elegibles con menor
+    funding relativo medio de los 7 días anteriores y corta en el quintil con
+    mayor funding obtiene un retorno total neto positivo, con un flujo de
+    funding que supera sus costes, y supera a carteras aleatorias comparables.
+  economic_rationale: >
+    Demanda especulativa de apalancamiento largo y capital de arbitraje
+    limitado (BIS WP 1087, Crypto Carry). Ese trabajo estudia la base
+    futuro-spot; da fundamento pero no prueba esta estrategia transversal.
+  neutrality_claim: >
+    Neutral en nominal en cada rebalanceo. No se afirma neutralidad en beta ni
+    en riesgo de mercado; se mide la exposición residual.
+
+prior_knowledge_and_contamination:
+  - "51 ensayos previos en research/trials_inventory.csv; este es el 52."
+  - "Se vieron medias anualizadas del funding de BTC, ETH y SOL entre 2025-10-06 y 2026-10-09 (ventana del holdout): BTC 3,1 %, ETH 3,3 %, SOL -0,3 %."
+  - "Se vieron conteos trimestrales de contratos por umbral de volumen en USD (data/audit/funding_backfill_audit.md). Influyen en el umbral y en la fecha de inicio."
+  - "En la puerta 1 se vieron cocientes entre tasa absoluta, tasa relativa y precio, no niveles de funding."
+  - "No se ha calculado ningún P&L, ranking ni diferencial entre contratos."
+
+data:
+  sources:
+    funding_export_zip_sha256: 65ba6712a6ab657389d2795d3ed77bedb4270841dfe711147ae9df16e366edab
+    vps_backfill_tgz_sha256: e672b3595edb59b14b4aa7dda5fc097eda040395c2db32f1fd46ae4e5bf212a8
+    processed_funding_hourly: data/processed/funding_carry/funding_hourly.parquet
+    processed_candles_1d: data/processed/funding_carry/candles_1d.parquet
+    processed_hashes: data/audit/funding_backfill_summary.json
+  funding_fields:
+    ranking: relative_rate
+    cash_flow: absolute_rate
+    units: >
+      relative_rate es fracción del precio por hora; absolute_rate es USD por
+      unidad de contrato y hora. Verificado en la puerta 1 en la era horaria.
+    sign: "Positiva: los largos pagan a los cortos (documentación de Kraken; no verificable con datos públicos)."
+    timestamp: >
+      Según la API, inicio del periodo horario al que se aplica la tasa. No se
+      ha verificado empíricamente cuándo se publica cada tasa; por eso el
+      ranking usa un desfase conservador de una hora (ver signal.score).
+  contract_life: >
+    Desde el primer hasta el último registro de funding (exportación más API).
+    Las velas fuera de esa ventana son relleno de la API y no se usan.
+  no_fill: "No se rellenan huecos de funding ni de velas."
+  last_valid_data_utc: "2026-10-05T00:00:00Z"
+
+universe:
+  instruments: "Perpetuos lineales PF_ con subyacente cripto, vivos y retirados."
+  exclude_categories_today: [xStocks, Equities, Commodities, Pre-IPO, Forex, Indices, Stablecoin]
+  exclude_manual_retired: [PF_AUDUSD, PF_JPYUSD, PF_TUSDUSD, PF_ETHBTCUSD]
+  eligibility_at_decision_time_T:
+    in_life: "La vida del contrato (primer a último funding) incluye T-1h y empezó al menos 30 días antes de T."
+    liquidity: >
+      Mediana del volumen diario en USD (volumen trade x cierre trade) de las
+      30 velas diarias completas anteriores a T. Los días sin volumen cuentan
+      como 0. Umbral: al menos 1.000.000 USD.
+    funding_coverage: "Al menos 160 de las 168 tasas horarias con timestamp en [T-169h, T-1h)."
+    no_lookahead_note: >
+      La elegibilidad solo usa información anterior a T. Si la vela trade del
+      día T no tiene volumen, la orden no se ejecuta: una apertura no se hace
+      (ese hueco queda en efectivo, sin sustituir el contrato) y un cierre sigue
+      execution_and_pnl.exit_if_no_trade_at_T.
+  liquidity_filter_uses_funding: false
+  min_eligible: 20
+  below_min_rule: "Si hay menos de 20 elegibles, se cierra todo y se queda en efectivo hasta la siguiente decisión con 20 o más."
+
+signal:
+  decision_time: "Cada lunes a las 00:00 UTC."
+  score: >
+    Media aritmética de relative_rate con timestamp en [T-169h, T-1h), es decir,
+    de T-169h a T-2h inclusive (168 tasas). Con cualquier interpretación del
+    timestamp (inicio o fin del periodo, publicación al inicio o al cierre de la
+    hora), todas esas tasas corresponden a periodos terminados y publicados
+    como muy tarde en T-1h.
+  selection: "Quintiles: n = floor(N/5) por lado. Largos: los n de menor score. Cortos: los n de mayor score."
+  ties: orden lexicográfico del símbolo
+  parameter_optimization: prohibited
+  frozen_parameters: [ventana 7 días, quintil, frecuencia semanal, umbral 1 M USD, mínimo 20, cobertura 160/168]
+  sensitivity_variants_reported_only:
+    - "Costes adversos (deslizamiento con suelo de 30 pb)."
+    - "Retiradas con ajuste del 5 %."
+    - "Aleatorias secundarias independientes, con y sin costes."
+  sensitivity_rule: "Ninguna variante de sensibilidad puede convertirse en vía alternativa de aprobación."
+
+portfolio:
+  reference_capital_usd: 550
+  gross_notional: "100 % del patrimonio en cada rebalanceo: 50 % largo y 50 % corto."
+  weighting: "Nominal igual dentro de cada lado."
+  quantities: >
+    Cantidad = nominal objetivo / precio de ejecución, redondeada hacia abajo a
+    la precisión del contrato (contractValueTradePrecision del catálogo de
+    2026-10-10). Para retirados sin especificación: precisión mínima tal que el
+    incremento sea como mucho 1 USD de nominal. Se registra el redondeo.
+  between_rebalances: "Las cantidades no cambian; el nominal deriva con el precio."
+  trades: "Solo se negocia la diferencia de cantidad por contrato."
+
+execution_and_pnl:
+  execution_price: "Apertura de la vela trade diaria que empieza en T."
+  exit_if_no_trade_at_T: "Primera apertura posterior con volumen; mientras tanto la posición sigue abierta y paga o cobra funding."
+  retirement_exit: >
+    Si el contrato se retira con posición abierta: cierre al último cierre mark
+    dentro de su vida, ajustado en contra según el lado (largo: mark x (1 - a);
+    corto: mark x (1 + a)), más comisión taker y deslizamiento de salida.
+    Escenario principal a = 2 %; sensibilidad a = 5 %. Es un sustituto
+    conservador, no el precio oficial de liquidación, y se etiqueta así. Se
+    informa del número de cierres y de la diferencia de resultado entre ambos
+    escenarios en USD y en puntos básicos del capital. Ninguna posición se
+    elimina del cálculo; si falta el mark, la ejecución falla.
+  funding_cash_flow: >
+    Para cada periodo horario con timestamp ts y posición q (positiva larga,
+    negativa corta) mantenida en ts: flujo = -q x absolute_rate(ts). La posición
+    abierta en T cuenta desde el periodo ts = T; la cerrada en T' no cuenta en ts = T'.
+    Esta asignación sigue la documentación de la API; un error de una hora
+    solo afectaría a las horas de borde de cada semana.
+  side_balance_after_execution: >
+    Se aplica en cada rebalanceo, también en las semanas que pasan a efectivo,
+    a la estrategia y a cada cartera aleatoria. Una orden que no se ejecuta no
+    se sustituye. Tras las ejecuciones del lunes, L y S son los nominales
+    largo y corto alcanzados (incluidas las posiciones que no se pudieron
+    cerrar), valorados al precio de ejecución. Objetivo por lado:
+    m = min(L, S, 0,5 x patrimonio). Si un lado supera m en más de la
+    tolerancia (1 % del patrimonio, para absorber el redondeo de lotes), se
+    reduce proporcionalmente entre sus posiciones ejecutables ese día al mismo
+    precio de apertura, cobrando comisión y deslizamiento sobre la cantidad
+    reducida además de los de la ejecución inicial (supuesto conservador). Tras
+    cada rebalanceo la exposición bruta no supera el 100 % del patrimonio;
+    entre rebalanceos puede derivar con los precios.
+  execution_failure: >
+    Si después de esa reducción algún lado sigue superando m más la tolerancia
+    (porque el exceso está en posiciones que no se pueden negociar ese día),
+    se registra un fallo de ejecución. Si ocurre en la estrategia, la
+    evaluación entera se declara no evaluable: no se inventan fills ni se
+    presenta como neutral una cartera que no lo es. Si ocurre en una cartera
+    aleatoria, esa simulación se descarta y se informa del número de descartes.
+  mark_to_market: "Diario con cierre mark, para la serie de rendimientos diarios."
+  pnl_breakdown: [precio, funding, comisiones, deslizamiento, cierres por retirada]
+
+costs:
+  fee_taker: 0.0005
+  fee_source: "[REDACTADO] Tarifa taker verificada el 2026-10-10 contra evidencia archivada fuera del repositorio; ver decisions/redaction_manifest.md."
+  maker_rebates: no
+  slippage_bp_per_side:
+    base: "max(10, 0.1 x sqrt(nominal / ADV30_USD) x 1e4)"
+    adverse: "max(30, 0.3 x sqrt(nominal / ADV30_USD) x 1e4)"
+  reported: [coste de rotación anual, porcentaje del capital consumido por costes, multiplicador de costes de equilibrio]
+
+sample:
+  start: "Primer lunes desde 2023-01-02 con al menos 20 elegibles. Se registra la fecha antes de calcular P&L."
+  start_recorded: "2024-03-11"
+  eligibility_evidence: data/audit/funding_carry_eligibility_summary.json
+  eligibility_counts: >
+    Walk-forward: 82 semanas (una con menos de 20 elegibles, en efectivo),
+    entre 4 y 9 contratos por lado. Holdout: 52 semanas, 9 con menos de 20
+    elegibles (en efectivo), entre 4 y 7 por lado. 75 contratos distintos
+    elegibles en algún momento.
+  idle_weeks_count_in_returns: >
+    Las semanas en efectivo cuentan en la rentabilidad anualizada con
+    rendimiento 0; el capital inmovilizado es un coste real de la regla.
+  holdout: "Decisiones de los lunes 2025-10-06 a 2026-09-28 (52 semanas); P&L hasta 2026-10-05. Un solo uso."
+  walk_forward: "Del inicio a 2025-10-06, informado por trimestres naturales sin reajustes."
+  holdout_note: >
+    Holdout retrospectivo no completamente ciego: ya se vieron medias de
+    funding de BTC, ETH y SOL en ese periodo. No es una confirmación
+    independiente definitiva; esa solo puede venir de una fase prospectiva en
+    paper con las reglas congeladas.
+  start_is_conditioned: >
+    El umbral de liquidez y el mínimo de 20 contratos se fijaron después de ver
+    conteos de cobertura y liquidez (no de funding ni de P&L). El inicio de la
+    muestra está condicionado por ese análisis; no se presenta como elegido sin
+    información previa.
+
+benchmarks:
+  random_portfolios:
+    n: 1000
+    seed: 20261010
+    primary: >
+      Cada lunes, mismo universo elegible conocido en T y mismo n por lado que
+      la estrategia (o efectivo cuando la estrategia está en efectivo). De la
+      estrategia se toman, para esa semana, solo recuentos de posiciones: k_L y
+      k_S contratos que siguen en el mismo lado, f_LS que pasan de largo a corto
+      y f_SL de corto a largo. La cartera aleatoria mantiene k_L de sus largos y
+      k_S de sus cortos, gira f_LS de sus largos a corto y f_SL de sus cortos a
+      largo, todo elegido uniformemente entre sus posiciones que siguen
+      elegibles, y completa cada lado con contratos elegibles no usados elegidos
+      uniformemente. No consulta funding ni rendimientos. Si no puede reproducir
+      un recuento por falta de candidatos elegibles, hace lo que pueda y se
+      registra la diferencia. Mismos costes, lotes, reglas de ejecución,
+      equilibrio de lados y retiradas que la estrategia.
+    matched_exactly: [universo elegible, n por lado, exposición bruta objetivo, recuentos de entradas, salidas, mantenimientos y cambios de dirección]
+    matched_approximately: >
+      El turnover nocional no puede igualarse exactamente: el reajuste de las
+      posiciones mantenidas a peso igual depende de cómo se ha movido el precio
+      de cada contrato, que no es el mismo en la estrategia y en la aleatoria.
+      Se informa del cociente entre el turnover nocional anual de cada
+      aleatoria y el de la estrategia (mediana, p5 y p95).
+    secondary: >
+      Diagnóstico: selección aleatoria independiente cada lunes con el mismo n
+      por lado y la misma exposición. Rota más que la estrategia, así que paga
+      más costes; se informa con y sin costes para separar el valor del ranking
+      de la ventaja de rotar menos. No es criterio de decisión.
+    why_primary: "Una selección independiente cada semana no conserva la rotación y favorecería a la estrategia por pagar menos costes."
+  also_reported: [efectivo al 0 %, cartera equiponderada larga del universo elegible, BTC buy-and-hold]
+
+statistics:
+  return_series: rendimientos diarios netos
+  bootstrap_blocks_days: [10, 20, 40]
+  ci: 0.95
+  minimum_detectable_effect: "Se calcula con la volatilidad de las carteras aleatorias antes de interpretar el resultado."
+  beta: "Regresión diaria contra BTC y contra la equiponderada del universo, con errores Newey-West."
+  multiple_testing: "Deflated Sharpe con N = 52 ensayos, misma adaptación conservadora que en v4."
+
+decision_rules:
+  scenario_for_verdict: "Costes base y retiradas con ajuste del 2 %. Los costes adversos se informan como sensibilidad; el escenario de retirada del 5 % se usa además en la regla de inconclusión."
+  promising_all_required:
+    - "Retorno neto positivo en walk-forward y en holdout."
+    - "Funding acumulado mayor que la suma de comisiones y deslizamiento en walk-forward y en holdout."
+    - "Límite inferior del IC 95 % del rendimiento neto en walk-forward mayor que 0 con los tres tamaños de bloque."
+    - "Percentil de la estrategia frente a las aleatorias de 90 o más en walk-forward."
+    - "Drawdown máximo menor del 15 % en walk-forward y en holdout."
+    - "Deflated Sharpe de 0,95 o más en walk-forward."
+    - "Multiplicador de costes de equilibrio de 2 o más."
+    - "Rentabilidad neta anualizada (CAGR) de al menos el 8,5 % en el agregado walk-forward y en el holdout, después de comisiones, deslizamiento y cierres por retirada (escenario del 2 %). Umbral económico fijado el 2026-10-10, no una previsión."
+  rejected_any:
+    - "Retorno neto negativo en walk-forward."
+    - "Drawdown máximo del 15 % o más."
+    - "Funding acumulado menor o igual que los costes en walk-forward: el carry no se paga a sí mismo."
+  not_evaluable: "Fallo de ejecución de la estrategia según execution_and_pnl.execution_failure."
+  inconclusive: >
+    Cualquier otro caso, incluida potencia insuficiente. También si el
+    veredicto (prometedora o rechazada) cambia entre los escenarios de
+    retirada del 2 % y del 5 %.
+  economic_reference_reported: >
+    Rentabilidad frente a 1 y 2 veces la media del rendimiento de las letras
+    del Tesoro de EE. UU. a 13 semanas en cada periodo evaluado. Serie única:
+    Daily Treasury Bill Rates del Tesoro (cotizaciones diarias del mercado
+    secundario), plazo de 13 semanas, columna coupon equivalent, media de los
+    días hábiles del periodo. No se mezclan con tipos de subasta (investment
+    rate ni high rate). Se informa; no es un criterio adicional. La serie se
+    descarga y registra con su hash antes de la evaluación.
+  holdout_access: "Solo si el walk-forward no queda rechazado, con archivo de desbloqueo como en v4."
+  no_rescue: "Cualquier cambio de ventana, filtro, umbral o selección exige un experiment_id nuevo."
+
+gates_before_freeze:
+  gate_1_units_and_cadence:
+    status: passed_data_checks
+    evidence: data/audit/gate1_funding_units_summary.json
+    detail: >
+      Desde 2023-01-01: 99,97 % de pasos de 1 h, ninguno menor; el cociente
+      absolute_rate / relative_rate dividido por el cierre mark del día tiene
+      mediana entre 0,98 y 1,02 en los 1.262 pares contrato-año. El signo
+      queda como hecho documental.
+  gate_2_retirement_exits:
+    status: passed_pre_run_check
+    detail: >
+      Los 504 contratos tienen cierres mark dentro de su vida. La verificación
+      de cada cierre concreto se hace durante la ejecución; si falta un precio,
+      la ejecución falla.
+  gate_3_account_eligibility:
+    status: pending_user
+    blocks: [paper, live]
+    blocks_freeze_or_backtest: false
+    detail: >
+      Comprobación manual de solo lectura en Kraken Pro de los perpetuos
+      disponibles para la cuenta. Es un bloqueo de despliegue. No recorta el
+      universo histórico: la elegibilidad actual de la cuenta y la
+      disponibilidad histórica de los contratos son cuestiones distintas.

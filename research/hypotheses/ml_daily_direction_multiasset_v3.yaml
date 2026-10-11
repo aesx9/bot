@@ -1,0 +1,555 @@
+id: ml-daily-direction-multiasset-v3
+
+version: 3
+
+status: preregistered
+
+preregistered_utc_date: "2026-10-10"
+frozen_note: >
+  Congelado. El hash SHA-256 de este archivo exacto está en
+  decisions/decision_log.md. Cualquier cambio requiere un experiment_id nuevo.
+
+created_utc_date: "2026-10-10"
+live_trading: false
+
+lineage:
+  supersedes: ml-daily-direction-multiasset-v1 (versión 2, hypotheses/ml_daily_direction_multiasset.yaml)
+  previous_file_preserved: true
+  previous_file_role: >
+    Registro de la regla original de la puerta del universo y de su resultado
+    formal (opción 2, S = 2022). No se edita.
+  reason: >
+    Corrección metodológica tras la auditoría de datos: la regla original
+    contaba pares retirados y no activos desaparecidos. La retirada de pares
+    cruzados y las migraciones de ticker se confunden con desapariciones de
+    activos. La corrección se toma antes de calcular ningún resultado de
+    rentabilidad de esta estrategia.
+  decision_log_entry: "decisions/decision_log.md, 2026-10-10: Corrección metodológica del universo (versión 3)"
+  no_merging_of_results_or_conclusions_across_versions: true
+
+changelog:
+  v3_2026-10-10:
+    - "revisión final: m bruto también en la regla, etiqueta alineada con TWAP, purga definida para bloques y subventanas, 30 etiquetas por clase agregadas, regla de holdout único; congelado"
+    - "calibración: ventana de 180 días antes de cada bloque, predicciones prequential en 6 subventanas, temperatura única"
+    - "asset_identity fuera de las variables predictoras; se conserva como metadato"
+    - "m bruto con todos los activos y coste de cada activo restado una vez; sin umbral de probabilidad"
+    - "bloque effective_coverage; HYPE no elegible en v3; NEAR y SUI con evidencia limitada"
+    - "construcción de bloques walk-forward y distinción entre generalización inicial y evaluación recurrente"
+    - "nuevo experiment_id; universo fijo de 9 activos como principal"
+    - "universo dinámico desde 2022 como análisis secundario exploratorio, con sesgo declarado"
+    - "identidad de activo por activo base y tabla de alias (data/asset_aliases.csv)"
+    - "corrección de la regla de la puerta: la unidad de análisis es el activo, no el par"
+  v2_2026-10-10:
+    - "universo dinámico point-in-time como principal, condicionado a verificar pares deslistados en Kraken"
+    - "umbral de probabilidad 0.55 sustituido por regla de valor esperado estimada fuera de la muestra de entrenamiento"
+    - "LightGBM debe superar a la regresión logística en walk-forward; si no, se registra que la complejidad no compensa"
+    - "multiplicador de costes de equilibrio con distribución bootstrap; slippage dependiente del volumen"
+    - "ejecución por TWAP 00:15 a 01:15 UTC en lugar del cierre"
+    - "desgloses por año, régimen, liquidez y lado; alpha frente a BTC y momentum"
+    - "paper trading de 6 a 24 meses con revisiones y barreras fijadas de antemano"
+    - "funding excluido como variable del modelo principal; solo se usa como coste en la fase B"
+    - "origen: crítica externa revisada punto por punto con el usuario"
+
+purpose: >
+  Diseñar un modelo de machine learning que aprenda patrones históricos de
+  precio y volumen en un universo de criptoactivos líquidos y decida
+  cada día LONG, SHORT o FLAT para el día siguiente. El objetivo es comprobar
+  si existe una ventaja neta de costes, fuera de muestra, frente a referencias
+  simples. Es solo diseño: no hay datos descargados, entrenamiento ni
+  resultados. Ningún resultado habilita trading real.
+
+falsifiable_hypothesis: >
+  Un modelo LightGBM entrenado en panel (todos los activos juntos), con
+  variables disponibles al cierre diario UTC, produce decisiones long/short
+  fuera de muestra cuyo rendimiento neto de cartera es positivo, cuyo
+  intervalo de confianza del 95 % (bootstrap por bloques) excluye cero, que
+  supera al percentil 90 de señales aleatorias emparejadas, supera en Sharpe
+  neto tanto al buy-and-hold equiponderado como a un momentum temporal simple
+  congelado, y mantiene un drawdown máximo inferior al 15 %, también con
+  costes adversos. No cumplir todas las condiciones no es un aprobado.
+
+prior_expectation: >
+  Rechazado o inconcluso es el resultado más probable. Las variables de
+  precio diario son las más estudiadas del mercado; cualquier ventaja que
+  quede probablemente sea pequeña. El benchmark difícil no es el azar sino el
+  momentum temporal simple, que ya está documentado en cripto: si el modelo
+  no lo supera, el ML no aporta nada.
+
+universe:
+  primary:
+    type: fijo
+    assets: [BTC, ETH, SOL, ZEC, XRP, HYPE, NEAR, SUI, ADA]
+    chosen_by: usuario, 2026-10-10
+    survivorship_bias: >
+      No resuelto. La lista se eligió conociendo qué activos han sobrevivido y
+      subido (por ejemplo ZEC, HYPE, SUI). Esta decisión no demuestra que el
+      universo fijo sea representativo; solo lo fija como análisis principal.
+    mitigations: [universo congelado, entrada por fecha de listado, subconjunto BTC/ETH/XRP/ADA, límites de concentración]
+    short_history_assets: "HYPE y SUI entran solo con 365 días tras el calentamiento; no se juzgan por separado."
+  secondary_exploratory:
+    type: dinámico point-in-time desde 2022-01-01
+    rule: >
+      En cada fecha t, los 10 activos con mayor volumen medio en USD de los 30
+      días anteriores en Kraken spot, calculado solo con datos hasta t-1, sin
+      stablecoins ni tokens envueltos, con 200 días previos de historial y
+      recálculo el primer día de cada mes. La identidad del activo se toma del
+      activo base, no del par; las migraciones de ticker se tratan según
+      data/asset_aliases.csv y no se unen historiales sin verificar continuidad.
+    limitations: >
+      No se considera libre de sesgo de supervivencia ni con cobertura
+      histórica completa. La auditoría por activo del archivo 2026Q2 muestra
+      activos sin par vivo con última vela en 2022: 1, 2023: 3, 2024: 4, 2025: 74
+      (data/asset_level_audit.py), patrón compatible con una purga de los
+      activos retirados antes de los últimos trimestres.
+    role: >
+      Exploratorio. No puede sustituir al principal ni confirmar la hipótesis.
+  selection_between_universes: >
+    Los resultados de rentabilidad no se usan para elegir entre universos.
+    El principal es el fijo; el dinámico se informa por separado y no se
+    escoge después el que dé mejores resultados.
+  gate_history:
+    original_rule_result: "opción 2, S = 2022 (regla basada en pares; ver versión anterior)"
+    corrected_assessment: >
+      La regla original no acredita la cobertura histórica del universo porque
+      usa la unidad de análisis equivocada (pares en lugar de activos).
+  phase_a_signal_source: spot USD en Kraken
+  phase_b_monetization_source: perpetuos Kraken Futures PF_*USD; un activo sin perpetuo verificado queda fuera de la fase B y se registra
+  verify_every_symbol_against_live_catalogue_before_download: true
+
+effective_coverage:
+  nature: >
+    Cobertura de datos disponible por activo según las reglas de entrada ya
+    escritas. Describe datos, no resultados financieros. Calculada el
+    2026-10-10 a partir de data/kraken_pairs_last_candle.csv, sin haber
+    calculado ninguna señal ni retorno de estrategia.
+  dataset:
+    source: Kraken_OHLCVT_Full_2026Q2 (MANIFEST generado 2026-08-17)
+    pairs_used: spot USD (ZUSD) de cada activo
+    data_cutoff: "2026-06-30"
+    daily_coverage_of_used_pairs: entre 99,7 % (XBTUSD) y 100 %
+  entry_rule: >
+    Primer día spot USD más 200 días de calentamiento; HYPE y SUI, 365 días
+    adicionales (short_history_assets). Nunca antes de 2018-01-01.
+  partitions:
+    initial_training: {start: "2018-01-01", end: "2022-12-31"}
+    walk_forward_test: {start: "2023-01-01", end: "2025-06-30", folds: 5, block_months: 6}
+    holdout: {start: "2025-07-01", end: "2026-06-30"}
+  counts_unit: >
+    Días de calendario elegibles en cada partición. Las filas con etiqueta
+    válida serán ligeramente menos (huecos, purga, embargo y último día sin
+    etiqueta); el recuento exacto se registra en la auditoría de datos.
+  assets:
+    BTC:  {pair: XBTUSD, first_spot_day: "2013-10-06", eligible_from: "2018-01-01", initial_training: 1826, walk_forward: 912, holdout: 365, status: elegible}
+    ETH:  {pair: ETHUSD, first_spot_day: "2015-08-07", eligible_from: "2018-01-01", initial_training: 1826, walk_forward: 912, holdout: 365, status: elegible}
+    ZEC:  {pair: ZECUSD, first_spot_day: "2016-10-29", eligible_from: "2018-01-01", initial_training: 1826, walk_forward: 912, holdout: 365, status: elegible}
+    XRP:  {pair: XRPUSD, first_spot_day: "2017-05-18", eligible_from: "2018-01-01", initial_training: 1826, walk_forward: 912, holdout: 365, status: elegible}
+    ADA:  {pair: ADAUSD, first_spot_day: "2018-09-28", eligible_from: "2019-04-16", initial_training: 1356, walk_forward: 912, holdout: 365, status: elegible desde 2019-04-16}
+    SOL:  {pair: SOLUSD, first_spot_day: "2021-06-17", eligible_from: "2022-01-03", initial_training: 363, walk_forward: 912, holdout: 365, status: "elegible desde 2022-01-03; entrenamiento inicial limitado"}
+    NEAR: {pair: NEARUSD, first_spot_day: "2022-06-16", eligible_from: "2023-01-02", initial_training: 0, walk_forward: 911, holdout: 365, status: evidencia inicial limitada}
+    SUI:  {pair: SUIUSD, first_spot_day: "2023-05-03", eligible_from: "2024-11-18", initial_training: 0, walk_forward: 225, holdout: 365, status: evidencia limitada}
+    HYPE: {pair: HYPEUSD, first_spot_day: "2026-01-28", eligible_from: null, initial_training: 0, walk_forward: 0, holdout: 0, status: no elegible en v3}
+  HYPE:
+    decision: no evaluable ni operable en v3
+    reason: >
+      El par spot HYPEUSD tiene 154 días en el archivo con corte 2026-06-30,
+      por debajo de los 565 días que exigen las reglas de entrada. Usar el
+      perpetuo (desde enero de 2025) mezclaría fuentes y tampoco alcanzaría el
+      requisito.
+    scope: >
+      No es una exclusión permanente. Significa no elegible con esta versión
+      y este conjunto de datos. Una versión futura puede reevaluarlo cuando
+      acumule historial suficiente, registrando el cambio con un experiment_id
+      nuevo.
+    symbol_kept_in_universe: true
+    paper_or_live_trading_in_v3: prohibido
+  universe_composition: >
+    Se conservan las nueve monedas originales. Ninguna se sustituye ni se
+    elige por resultados.
+
+data:
+  cost: gratuito y público únicamente
+  sources:
+    spot_ohlcvt:
+      name: Kraken Spot downloadable historical OHLCVT (CSV trimestrales)
+      interval: 1440 minutos
+      note: ya documentado en data/manifest.json para BTC y ETH; ampliar a todo el universo
+    perp_ohlc:
+      name: Kraken Futures charts API, velas diarias por contrato PF_*
+      use: alinear ejecución y retornos de la fase B
+    funding:
+      name: Kraken Futures historical funding rates por contrato
+      use: solo coste/ingreso de mantener la posición en la fase B; no es variable del modelo principal
+    cross_check:
+      name: Coinbase Exchange candles API cuando el activo exista allí
+      use: detectar velas anómalas; no se mezcla en el dataset principal
+  data_gate:
+    per_asset_report: [primera y última fecha, días sin vela, duplicados, timestamps no monótonos, OHLC inválido, frontera diaria UTC]
+    minimum_valid_days_pct_per_asset: 98.0
+    no_forward_fill_of_prices: true
+    sha256_of_every_raw_file: true
+    gate_fails_for_an_asset: el activo queda fuera y se registra; no se sustituye
+    gate_fails_for_BTC_or_ETH: detener el experimento
+
+timing:
+  timezone: UTC
+  feature_cutoff: cierre de la vela diaria 00:00 UTC
+  execution: precio medio (TWAP) de las velas de 1 minuto entre 00:15 y 01:15 UTC
+  execution_rationale: evitar el cierre UTC, cuando el spread y el rebalanceo son mayores
+  label_alignment: el retorno se mide de TWAP de ejecución a TWAP de ejecución del día siguiente
+  holding_period_days: 1
+  rebalance: diario; si la decisión no cambia, la posición se mantiene sin coste extra
+  no_lookahead: true
+
+label:
+  type: tres_clases_economicas
+  classes: [SHORT, FLAT, LONG]
+  definition: >
+    Retorno del activo entre el TWAP de ejecución del día de decisión y el del
+    día siguiente (ver timing.label_alignment),
+    menos el coste de ida y vuelta del escenario base de ese activo. Si el
+    retorno neto long o short supera +10 pb, la clase es la de mayor retorno
+    neto; si no, FLAT.
+  why_not_binary_up_down: >
+    Un modelo binario sube/baja se premia por acertar movimientos que no
+    cubren comisiones. La clase FLAT obliga a aprender cuándo no operar.
+  sensitivity_only: [0 pb, 20 pb]
+
+features:
+  rule: >
+    Solo información conocida al cierre UTC de la vela de decisión. Ventanas
+    móviles solo hacia atrás. Escalados ajustados solo en entrenamiento.
+  per_asset:
+    returns: [log_return 1d, 3d, 7d, 14d, 30d, 90d]
+    volatility: [vol realizada 7d, 30d, ratio 7d/30d, rango alto-bajo normalizado 1d]
+    trend: [distancia a SMA20, SMA50, SMA200 en unidades de volatilidad]
+    volume: [z-score de volumen 30d, cambio de volumen 7d]
+  cross_sectional:
+    - ranking del retorno 7d y 30d dentro del universo elegible ese día (HYPE nunca forma parte en v3)
+    - retorno del activo menos retorno de BTC (7d, 30d)
+  market_factor:
+    - retorno y volatilidad de BTC 1d, 7d, 30d
+    - dispersión de retornos 7d entre activos
+  calendar: [día de la semana]
+  asset_identity:
+    use_as_predictor: false
+    retain_as_metadata: true
+    uses_as_metadata: [particiones, reglas de entrada, controles de riesgo, límites de concentración, informes por activo]
+    reason: >
+      LightGBM no tiene representación aprendida para una categoría que no vio
+      en el entrenamiento, así que NEAR y SUI llegarían a su prueba de
+      generalización como un valor sin información. Sin identidad, el modelo
+      solo puede usar patrones de precio y volumen comparables entre monedas,
+      y no puede memorizar diferencias históricas de cada ticker.
+    comparability_requirement: >
+      Todas las variables por activo son relativas (retornos, volatilidad,
+      distancias en unidades de volatilidad, volumen como z-score o variación
+      frente a su propio historial), calculadas solo con datos pasados.
+    future: un modelo con identidad de activo sería otra hipótesis con otro experiment_id
+  explicitly_excluded:
+    - "indicadores redundantes añadidos por intuición (RSI, MACD, Stoch RSI); son transformaciones de los mismos precios y ya fallaron en 4h"
+    - "sentimiento, redes sociales, on-chain y libro de órdenes; no gratuitos o sin historial verificable, serían otro experimento"
+  funding_as_feature:
+    decision: excluido del modelo principal en ambos universos
+    reason: >
+      El funding solo existe desde que hay perpetuo, mucho después del inicio
+      del historial spot. Si se incluye como variable ausente antes de esa
+      fecha, la ausencia funciona como marcador de época y de antigüedad del
+      activo, y el modelo puede aprender efectos de época que no se repiten en
+      el test, donde el funding siempre existe. Exigirlo como condición de
+      entrada sesgaría el universo hacia activos veteranos. Excluirlo en los
+      dos universos mantiene comparables los dos pipelines y es coherente con
+      que la fase A evalúa una señal spot.
+    still_used_as: coste real de mantener la posición en la fase B
+    future: >
+      Un modelo con funding como variable sería un experiment_id nuevo,
+      entrenado solo en el periodo con perpetuos y contado como un ensayo más
+      en el Deflated Sharpe.
+  feature_count_cap: 40
+  feature_selection_after_test: prohibited
+
+model:
+  primary: LightGBM multiclase, entrenado en panel (todos los activos juntos)
+  why_panel: >
+    Con un solo activo diario hay unas 365 filas al año, muy pocas. Juntando
+    los activos se obtienen unas 15.000-20.000 filas, suficientes para un
+    modelo pequeño y regularizado.
+  parameters_frozen:
+    n_estimators: 300
+    learning_rate: 0.03
+    max_depth: 3
+    num_leaves: 7
+    min_child_samples: 200
+    subsample: 0.8
+    subsample_freq: 1
+    colsample_bytree: 0.7
+    reg_lambda: 10.0
+    random_state: 20261010
+    deterministic: true
+  grid_search: prohibido; cualquier cambio de parámetros es un experiment_id nuevo
+  calibration:
+    method: temperature scaling multiclase, un único parámetro de temperatura
+    scope: conjunto de todas las filas activo-día elegibles; sin calibradores por activo
+    window: >
+      Los 180 días naturales inmediatamente anteriores a cada bloque de
+      evaluación (fechas UTC, extremo final exclusivo: el día anterior al
+      inicio del bloque).
+    out_of_fold_predictions: >
+      Prequential expansivo: la ventana se divide en seis subventanas
+      consecutivas de 30 días. Para cada subventana se entrena el modelo con
+      los parámetros congelados usando solo filas anteriores a ella cuyo
+      horizonte ya ha vencido, con la misma purga y embargo que entre bloques
+      (purge_and_embargo_days). Sus predicciones sobre la subventana forman el
+      conjunto de calibración.
+    base_model_for_block: >
+      El modelo que predice el bloque se entrena con todas las filas elegibles
+      anteriores al inicio del bloque, incluida la ventana de calibración,
+      menos purga y embargo. La temperatura se ajusta con las predicciones
+      prequential, que proceden de modelos con algo menos de historia; es una
+      aproximación aceptada y declarada.
+    fit: minimizar el log loss multiclase sobre las predicciones prequential
+    diagnostics: [log loss, Brier score multiclase, fiabilidad por clase]
+    insufficient_support: >
+      Si alguna clase tiene menos de 30 etiquetas reales entre las filas con
+      predicción prequential de la ventana (sumando todos los activos
+      elegibles, no 30 por activo), o alguna subventana no puede entrenarse,
+      el bloque se
+      marca como no calibrable y la acción es FLAT en todo el bloque. No se
+      cambia de método.
+    no_threshold_optimization: true
+    windows:
+      - {block: "2023-01-01 a 2023-06-30", calibration_window: "2022-07-05 a 2022-12-31"}
+      - {block: "2023-07-01 a 2023-12-31", calibration_window: "2023-01-02 a 2023-06-30"}
+      - {block: "2024-01-01 a 2024-06-30", calibration_window: "2023-07-05 a 2023-12-31"}
+      - {block: "2024-07-01 a 2024-12-31", calibration_window: "2024-01-03 a 2024-06-30"}
+      - {block: "2025-01-01 a 2025-06-30", calibration_window: "2024-07-05 a 2024-12-31"}
+      - {block: "2025-07-01 a 2026-06-30", calibration_window: "2025-01-02 a 2025-06-30"}
+  action_policy:
+    type: valor esperado neto
+    rule: >
+      EV_long = P_LONG * m_LONG_long + P_FLAT * m_FLAT_long + P_SHORT * m_SHORT_long,
+      donde P son probabilidades calibradas y m_c_long es el retorno bruto
+      medio de una posición long en los días cuya etiqueta real fue c.
+      EV_short se define igual para la posición short. Operar long si
+      EV_long > 0 y EV_long >= EV_short; short en el caso simétrico; si
+      ninguno es positivo, FLAT. EV se expresa neto de los costes del activo
+      (ver costs_applied_once).
+    margin: EV debe superar además 0,5 veces el coste de ida y vuelta del activo
+    m_estimation: >
+      Los valores m se calculan con las filas de la ventana de calibración de
+      cada bloque, todos los activos juntos, a partir del retorno bruto de la
+      posición en los días cuya etiqueta real fue c. No dependen de las
+      predicciones del modelo, así que no heredan sobreajuste; lo que se exige
+      es que solo usen información anterior al bloque, y usan el mismo
+      requisito de 30 etiquetas reales por clase. Para el holdout se usan
+      los de la ventana 2025-01-02 a 2025-06-30.
+    costs_applied_once: >
+      Los costes del activo (comisiones y slippage del escenario base) se
+      restan una sola vez, al pasar del m bruto al EV neto de cada activo. El
+      margen de 0,5 veces el coste de ida y vuelta es un requisito adicional
+      de seguridad, no un segundo descuento de costes, y la implementación no
+      debe restarlos dos veces.
+    no_probability_threshold: >
+      No existe umbral de probabilidad; la decisión depende solo del EV neto y
+      del margen. Nada de esto se optimiza por bloque.
+    frozen_before_holdout: >
+      La fórmula completa (definición de m, margen, ventana de estimación y
+      regla de desempate) queda congelada en este documento antes de calcular
+      ninguna predicción del holdout.
+    sensitivity_only: [margen 0, margen 1,0]
+    replaces: umbral de probabilidad 0.55 de la versión 1
+    reconciliation_v3: >
+      En v2 los m se estimaban "netos" y la regla decía que los costes ya
+      estaban descontados en m. En v3 m es bruto y el coste específico de cada
+      activo se resta una vez al calcular su EV, porque m se estima con todos
+      los activos juntos y los costes difieren por activo. La exigencia
+      económica no cambia.
+  lightgbm_vs_linear:
+    rule: >
+      En el agregado walk-forward (sin holdout), LightGBM debe superar a la
+      regresión logística multinomial en log loss y en retorno neto. Si no lo
+      hace, la conclusión registrada es que la complejidad no compensa; el
+      holdout se evalúa igualmente con LightGBM como estaba previsto y no se
+      sustituye por el logit. Una estrategia basada en el logit sería un
+      experiment_id nuevo.
+    rationale: >
+      El bootstrap corrige la dependencia en la evaluación, no en el
+      aprendizaje. Las filas del panel están muy correlacionadas, el tamaño
+      efectivo es mucho menor que el número de filas y LightGBM puede
+      sobreajustar aunque los intervalos sean honestos.
+
+baselines:
+  comparators:
+    - "efectivo (no operar)"
+    - "buy-and-hold equiponderado del universo disponible cada día"
+    - "momentum temporal congelado; long si retorno 30d > 0, short si < 0, mismo sizing"
+    - "SMA200 long/short (hypotheses/trend_daily_sma200.yaml)"
+    - "regresión logística multinomial con las mismas variables"
+    - "señales aleatorias emparejadas (mismo número de operaciones, proporción long/short y exposición)"
+  rule: el modelo debe superar a todas, no a la mejor elegida a posteriori
+
+portfolio:
+  sizing: volatilidad objetivo 10 % anual por posición, ventana 30d, solo pasado
+  max_weight_per_asset: 0.20
+  max_gross_exposure: 1.0
+  max_leverage: 1.0
+  max_open_positions: 9
+  rationale: >
+    Apalancamiento 1x deliberado. El objetivo es medir si hay ventaja, no
+    amplificar el resultado. El apalancamiento solo se discutiría tras pasar
+    paper trading, como experimento nuevo.
+
+costs:
+  execution: taker en entrada y salida, comisiones oficiales congeladas con fecha y hash
+  slippage:
+    model: >
+      Slippage por lado en pb = máximo(suelo del activo, k * (nocional de la
+      orden / volumen medio diario en USD de 30 días) ^ 0.5 * 10000), con
+      k = 0.1, calculado point-in-time.
+    floor_bp_per_side: {BTC: 5, ETH: 5, XRP: 8, SOL: 8, ADA: 10, NEAR: 15, SUI: 15, ZEC: 20, HYPE: 20, other_dynamic_universe: 15}
+  funding: real cuando esté verificado; si falta, el percentil 90 adverso del entrenamiento
+  no_maker_rebates: true
+  break_even_multiplier:
+    definition: factor por el que hay que multiplicar comisiones y slippage para que el retorno neto sea cero
+    reported_as: distribución sobre las réplicas del bootstrap por bloques (P5, P25, mediana)
+    requirement: el P25 del multiplicador de equilibrio debe ser >= 1.5
+
+validation:
+  phase_a: señal evaluada con precios spot (sin funding) para separar señal de monetización
+  phase_b: misma señal evaluada en perpetuos con funding, solo si la fase A pasa
+  scheme: walk-forward expansivo
+  initial_training: desde 2018-01-01 (o listado + calentamiento) hasta 2022-12-31
+  test_blocks_months: 6
+  purge_and_embargo_days: 2
+  row_date_and_purge_definition: >
+    La fecha de una fila es la de la vela diaria cuyo cierre (00:00 UTC del
+    día siguiente) es el corte de sus variables. Su etiqueta vence con el TWAP
+    de 00:15 a 01:15 UTC dos días después de esa fecha. Para cualquier límite
+    temporal L (inicio de un bloque, del holdout o de una subventana de
+    calibración), el conjunto de entrenamiento solo incluye filas con fecha
+    anterior o igual a L menos 3 días: se excluyen las filas de los dos días
+    previos a L (purga del horizonte más embargo). La misma regla se aplica
+    entre bloques, antes del holdout y dentro de cada una de las seis
+    subventanas de calibración.
+  final_holdout:
+    period: últimos 12 meses disponibles (2025-07-01 a 2026-06-30 con el corte de datos actual)
+    regime_limitation: >
+      12 meses pueden caer en un único régimen de mercado. Se acepta como
+      limitación declarada; el holdout no se alarga a costa del entrenamiento,
+      y el paper trading tampoco se considera prueba de robustez entre regímenes.
+    one_shot: true
+    one_shot_rule: >
+      El holdout se ejecuta una sola vez, con el código y la configuración
+      congelados. Si se ejecuta de nuevo o sus resultados se usan para cambiar
+      cualquier decisión, deja de ser confirmatorio, se registra en el log y la
+      confirmación pasa a depender solo del paper trading.
+    contamination_warning: >
+      El usuario ya ha visto gráficos y backtests de 4h recientes de varios de
+      estos activos. El holdout histórico puede no ser ciego del todo; la
+      confirmación real será el paper trading posterior.
+  uncertainty:
+    method: bootstrap por bloques móviles de fechas, conjunto para todos los activos
+    block_length_days: 20
+    sensitivity_block_lengths_days: [10, 40]
+    replicates: 10000
+  breakdowns_required:
+    - por año natural
+    - por régimen definido a priori (BTC por encima o por debajo de su SMA200 al inicio de cada mes)
+    - por decil de liquidez en el universo dinámico; por activo en el universo fijo
+    - LONG y SHORT por separado
+  fold_construction:
+    scheme: >
+      Cinco bloques de test de 6 meses: 2023-01-01 a 2023-06-30, 2023-07-01 a
+      2023-12-31, 2024-01-01 a 2024-06-30, 2024-07-01 a 2024-12-31 y
+      2025-01-01 a 2025-06-30. El modelo de cada bloque se reentrena con todas
+      las filas elegibles de todos los activos anteriores al inicio del bloque,
+      menos la purga y el embargo. El holdout usa un modelo entrenado con
+      datos hasta 2025-06-30.
+    holdout_dates: {start: "2025-07-01", end: "2026-06-30"}
+  generalization_to_new_assets:
+    initial_generalization: >
+      Para cada activo, solo cuenta como prueba sobre un activo no visto el
+      primer bloque en que es elegible y su modelo no contiene ninguna fila
+      de ese activo: NEAR en el bloque 2023-01-01 a 2023-06-30; SUI en el
+      bloque 2024-07-01 a 2024-12-31.
+    recurrent_walk_forward: >
+      En los bloques siguientes el modelo ya ha visto datos anteriores del
+      activo. Esos resultados son evaluación walk-forward ordinaria, no prueba
+      de generalización a activos desconocidos, y se informan por separado.
+  per_asset_reporting:
+    rule: >
+      Cada activo se informa con su intervalo bootstrap y su número de
+      operaciones. Un activo con menos de 365 días de evaluación fuera de
+      muestra antes del holdout (SUI) se marca como evidencia insuficiente
+      para una conclusión individual.
+    contribution_vs_sufficiency: >
+      El límite del 50 % del beneficio por activo protege contra la
+      dependencia de una moneda, pero no convierte una muestra pequeña en
+      evidencia fiable. Ningún rendimiento por activo se declara validado
+      individualmente si su intervalo no lo permite.
+  beta_and_benchmark_alpha:
+    method: >
+      Regresión de los retornos diarios netos de la estrategia sobre el
+      retorno de BTC y sobre el retorno del benchmark de momentum congelado,
+      con errores estándar HAC (Newey-West, 10 retardos).
+    requirement: alpha positivo con p < 0.05 unilateral
+  multiple_testing:
+    method: Deflated Sharpe Ratio (Bailey y López de Prado)
+    trials_to_count: >
+      Todas las hipótesis y variantes previas registradas en experiments.csv
+      (al menos 40 variantes de 4h más copy trading, funding A/B, SMA200 y
+      microestructura) más las de este experimento.
+  power_note: >
+    Antes del test, estimar con datos de desarrollo la volatilidad real por
+    operación y calcular el efecto mínimo detectable con el número de
+    operaciones esperado. Si ese efecto es irrealmente grande, el resultado
+    se declarará inconcluso de antemano en lugar de forzar conclusiones.
+
+decision_criteria:
+  pass_requires_all:
+    - rendimiento neto anualizado > 0 en holdout y en el agregado walk-forward
+    - límite inferior del IC 95 % > 0
+    - percentil >= 90 frente a señales aleatorias emparejadas
+    - Sharpe neto > buy-and-hold equiponderado y > momentum temporal congelado
+    - alpha frente a BTC y momentum positivo y significativo (ver validation)
+    - Deflated Sharpe Ratio con probabilidad >= 0.95
+    - drawdown máximo < 15 %
+    - P25 bootstrap del multiplicador de costes de equilibrio >= 1.5
+    - LONG y SHORT con retorno neto >= 0 por separado
+    - "ningún año natural aporta más del 50 % del beneficio total"
+    - "universo fijo: ningún activo aporta más del 50 %; universo dinámico: ningún decil de liquidez aporta más del 50 %"
+    - al menos 150 operaciones cerradas fuera de muestra
+  reject: rendimiento neto negativo, drawdown >= 15 % o P25 del multiplicador de equilibrio < 1
+  inconclusive: cualquier otro caso
+  no_rescue: >
+    Si falla, no se ajustan umbrales, variables, universo ni parámetros para
+    rescatarlo. Una idea nueva es un experiment_id nuevo y cuenta como un
+    ensayo más en el Deflated Sharpe.
+
+after_a_pass:
+  shadow_mode: 30 días como mínimo, sin órdenes
+  paper_trading:
+    duration: no fija; entre 6 y 24 meses
+    looks: revisiones preestablecidas a los 6, 12, 18 y 24 meses
+    stopping_rule: >
+      Se declara confirmado solo si en una revisión el retorno neto acumulado
+      supera la barrera correspondiente a un nivel global de 0,05 repartido
+      con alpha spending tipo O'Brien-Fleming (barreras muy exigentes al
+      principio y más suaves al final). Se detiene como fallido si en
+      cualquier revisión el drawdown supera el 15 % o el retorno es negativo
+      a los 12 meses. Si a los 24 meses no se cruza ninguna barrera, inconcluso.
+    why_not_open_ended: >
+      Alargar el paper hasta que salga bien, mirando los resultados cada poco,
+      infla la probabilidad de un falso positivo. Las revisiones y barreras se
+      fijan ahora.
+    regime_limitation: >
+      Aunque dure 24 meses, el paper puede coincidir con un único régimen; esa
+      limitación se declara en cualquier conclusión.
+  real_money: decisión manual posterior sobre una prueba pequeña con límites de pérdida fijados por escrito
+  capital_increase: se decide con resultados reales, nunca con el backtest
+
+reproducibility:
+  raw_data_immutable: true
+  sha256_raw_and_feature_tables: true
+  record_git_commit_python_and_lockfile: true
+  save_all_oos_predictions_and_trade_ledgers: true
+  no_secrets_or_large_raw_data_in_git: true
